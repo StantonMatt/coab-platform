@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(done)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "context7",
+    "supabase"
+  ]
+}
