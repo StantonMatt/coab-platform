@@ -537,6 +537,17 @@ export default apiClient;
 - [x] Chilean RUT validation with Modulus 11
 - [x] Mobile-first design (44px touch targets)
 
+---
+
+### Nota sobre almacenamiento de tokens (seguridad)
+
+- Opción actual (MVP): `localStorage` para `access_token` y `refresh_token`.
+  - Ventajas: simple, funciona bien con SPA.
+  - Riesgo: susceptible a XSS. Mitigar con CSP estricta, sanitización y evitar `dangerouslySetInnerHTML`.
+- Alternativa (más segura): `refresh_token` en cookie httpOnly + `access_token` en memoria.
+  - Requiere cambios de backend (cookies sameSite/secure) y manejo de CORS.
+- Recomendación: mantener `localStorage` en MVP con CSP; evaluar migración a cookies httpOnly en Fase 2.
+
 **Next Iteration:**
 Iteration 3 will add the complete customer dashboard with real data (boletas, payment history, balance details).
 

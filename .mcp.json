@@ -24,8 +24,12 @@
         "--project-ref=bjiemkzybwadrvmmphqo"
       ],
       "env": {
-        "SUPABASE_ACCESS_TOKEN": "sbp_db7a4953698620b694b5a8f59bccc0d2e8c37713"
+        "SUPABASE_ACCESS_TOKEN": "sbp_a6889fe0f87fb651d7c21dc69df66dac9c756810"
       }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
     }
   }
 }

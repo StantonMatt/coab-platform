@@ -40,7 +40,7 @@ cd coab-backend
 npm init -y
 
 # Install production dependencies (see TECH_STACK.md for versions)
-npm install fastify @fastify/cors @fastify/helmet @fastify/rate-limit @fastify/multipart @fastify/static @fastify/jwt
+npm install fastify @fastify/cors @fastify/helmet @fastify/rate-limit @fastify/multipart @fastify/static
 npm install @prisma/client @supabase/supabase-js
 npm install zod@^4.0.0 @node-rs/argon2 jose
 npm install pino pino-http @sentry/node
@@ -294,6 +294,20 @@ npx prisma migrate dev --name init_schema
 npx prisma studio
 # Open browser to http://localhost:5555
 # Verify you see all tables: clientes, tokens_configuracion, sesiones_refresh, boletas
+```
+
+**Recommended Database Indexes (performance):**
+
+```sql
+-- Clientes
+CREATE INDEX IF NOT EXISTS idx_clientes_rut ON clientes (rut);
+CREATE INDEX IF NOT EXISTS idx_clientes_numero_cliente ON clientes (numero_cliente);
+
+-- Boletas
+CREATE INDEX IF NOT EXISTS idx_boletas_cliente_periodo ON boletas (cliente_id, periodo);
+
+-- Transacciones de pago (si aplica en tu esquema)
+-- CREATE INDEX IF NOT EXISTS idx_transacciones_cliente_fecha ON transacciones_pago (cliente_id, fecha);
 ```
 
 **Acceptance Criteria:**

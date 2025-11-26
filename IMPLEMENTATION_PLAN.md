@@ -112,7 +112,7 @@ Based on professional code review feedback:
 
 - **[TECH_STACK.md](TECH_STACK.md)** - Complete technology stack (v2.2)
 - **[PRD_COMPLETE.md](PRD_COMPLETE.md)** - Complete Product Requirements (60+ pages)
-- **[CLAUDE.md](CLAUDE.md)** - Project overview and guidance
+- **[CURSOR.md](CURSOR.md)** - Project overview and guidance
 - **[CHANGELOG.md](CHANGELOG.md)** - Track actual progress and deviations
 
 ---
@@ -391,11 +391,10 @@ Use this for each iteration:
    - Fine for Railway's single instance
    - Phase 2: Upgrade to Redis for distributed rate limiting
 
-2. **Railway Cold Starts**
-   - Railway Hobby may spin down after 30 min of inactivity
-   - Mitigation: Cron-Job.org pings `/health` every 10 min
-   - Health check in `railway.json` also helps
-   - First wake: ~2-3s load (acceptable for Chilean 3G)
+2. **Railway Runtime Behavior**
+   - Railway Hobby runs an always-on process (no serverless cold starts)
+   - Keep `/health` endpoint; external pings are optional for uptime monitoring (not required on Hobby)
+   - Deploys/restarts take ~2-3 minutes to become healthy
 
 3. **Supabase Free Tier Limits**
    - 500MB database size (sufficient for 355 customers + history)

@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **COAB Platform** is a Chilean utility company (water services) admin and customer portal built as a monorepo with two main components:
 
-- **Backend** (`coab-backend/`): Node.js 22 + Express + TypeScript API with Prisma ORM and PostgreSQL
-- **Frontend** (`coab-frontend/`): Next.js 15 + TypeScript + React with mobile-first design
+- **Backend** (`coab-backend/`): Node.js 22 + Fastify + TypeScript API with Prisma ORM and PostgreSQL
+- **Frontend** (`coab-frontend/`): Vite + React + React Router with mobile-first design
 
 The platform handles customer management, payment processing, billing, service requests, and notifications for a Chilean water utility company.
 
@@ -31,7 +31,7 @@ coab-platform2/
 │   ├── .env               # Environment configuration (not in version control)
 │   └── .mcp.json          # MCP configuration
 │
-├── coab-frontend/         # Frontend Next.js application (to be created)
+├── coab-frontend/         # Frontend Vite application (to be created)
 │   ├── .env               # Frontend environment configuration
 │   └── .mcp.json          # MCP configuration
 │
@@ -110,7 +110,7 @@ See [REVIEWER_FEEDBACK_V2.md](REVIEWER_FEEDBACK_V2.md) for complete details.
 
 1. **Database**: Spanish-named schema with Prisma ORM, PostgreSQL (Supabase), existing 355 customers + historical data
 2. **Authentication**:
-   - Customer login: RUT + password (bcrypt, 12 salt rounds)
+   - Customer login: RUT + password (Argon2id)
    - Admin login: email + password (no MFA in MVP)
    - JWT with access (24h customer, 8h admin) and refresh (30d) tokens using `jose` library
    - Refresh token rotation for security
@@ -122,12 +122,12 @@ See [REVIEWER_FEEDBACK_V2.md](REVIEWER_FEEDBACK_V2.md) for complete details.
    - ~~BancoEstado SFTP imports~~ (Phase 2)
 5. **PDF Generation**: ~~Puppeteer + React~~ (Phase 2)
 6. **Notifications**: WhatsApp setup links (manual sharing in MVP, auto-send via Infobip in Phase 2)
-7. **Logging**: Winston with JSON format, file rotation
+7. **Logging**: Pino with JSON format
 8. **Performance**: Cursor-based pagination (50 default), database indexes
 
 ### Frontend Architecture (MVP)
 
-1. **Framework**: Next.js 15 App Router, TypeScript strict mode, mobile-first design
+1. **Framework**: Vite SPA + React Router v7, TypeScript strict mode, mobile-first design
 2. **UI Library**: shadcn/ui with Tailwind CSS, Chilean theme colors (primary-blue: #0066CC, accent-green: #00AA44)
 3. **State Management**:
    - React Query (@tanstack/react-query) for server state with caching
@@ -160,7 +160,7 @@ SMTP_HOST/USER/PASS=<optional>
 
 ### Frontend (.env)
 ```
-NEXT_PUBLIC_API_URL=http://localhost:3000/api/v1
+VITE_API_URL=http://localhost:3000/api/v1
 ```
 
 ## Common Patterns
@@ -169,13 +169,13 @@ NEXT_PUBLIC_API_URL=http://localhost:3000/api/v1
 ```typescript
 function validarRUT(rutStr: string): boolean {
   const cleaned = rutStr.replace(/[.-]/g, '');
-  if (cleaned.length !== 9) return false;
+  if (cleaned.length < 8 || cleaned.length > 9) return false; // cuerpo: 7-8 dígitos + DV
   const body = cleaned.slice(0, -1);
   const dv = cleaned.slice(-1).toUpperCase();
   let sum = 0;
   let multiplier = 2;
   for (let i = body.length - 1; i >= 0; i--) {
-    sum += parseInt(body[i]) * multiplier;
+    sum += Number(body[i]) * multiplier;
     multiplier = multiplier === 7 ? 2 : multiplier + 1;
   }
   const expectedDV = 11 - (sum % 11);
@@ -250,7 +250,7 @@ Key tables:
 ## Testing Strategy
 
 Each task has detailed test strategies. General patterns:
-- **Backend**: Jest/Supertest for integration, unit tests for validators/utils, mock Transbank/Infobip in CI
+- **Backend**: Vitest + Supertest for integration, unit tests for validators/utils, mock Transbank/Infobip in CI
 - **Frontend**: React Testing Library for components, MSW for API mocking, Lighthouse CI for performance
 - **Contract Tests**: Snapshot representative API responses for frontend alignment
 

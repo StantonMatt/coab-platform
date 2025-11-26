@@ -239,12 +239,15 @@ datasource db {
 |------------|---------|--------------|
 | **date-fns** | ^4.0.0 | `npm install date-fns` |
 | **date-fns/locale/es** | Included | Built-in Spanish locale |
+| **date-fns-tz** | ^3.0.0 | `npm install date-fns-tz` |
 
 **Why date-fns?**
 - **`es-CL` locale support** (d 'de' MMMM 'a las' HH:mm)
 - **Tree-shakeable** (import only what you need)
 - **Immutable** (no accidental date mutations)
 - **Better TypeScript support** than Moment.js
+- Pair with **date-fns-tz** for Chile timezone handling (America/Santiago)
+- Backend should set `TZ=America/Santiago` to ensure consistent timestamps and scheduling behavior
 
 ---
 
@@ -473,7 +476,6 @@ CNAME  www.coab.cl          → coab-platform.pages.dev
     "@fastify/rate-limit": "^10.0.0",
     "@fastify/multipart": "^8.0.0",
     "@fastify/static": "^7.0.0",
-    "@fastify/jwt": "^8.0.0",
     "prisma": "^6.0.0",
     "@prisma/client": "^6.0.0",
     "@supabase/supabase-js": "^2.0.0",
@@ -541,6 +543,7 @@ CNAME  www.coab.cl          → coab-platform.pages.dev
 # Node Environment
 NODE_ENV=development|test|staging|production
 PORT=3000
+TZ=America/Santiago
 
 # Supabase Database
 DATABASE_URL="postgresql://postgres.xxxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
@@ -1216,7 +1219,6 @@ npx tsx prisma/seed.ts
 **Added Missing Dependencies:**
 - `@fastify/multipart` (PDF boleta uploads)
 - `@fastify/static` (serve uploaded files)
-- `@fastify/jwt` (better than raw jose)
 
 **Fixed Documentation Issues:**
 1. ✅ Connection pooling warning (prevents Railway crashes)

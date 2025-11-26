@@ -1,0 +1,18 @@
+Project: COAB Platform (Chile)
+
+- All UI, messages, DB schema in Spanish (es-CL).
+- Enforce Chilean RUT validation (XX.XXX.XXX-X, mod 11).
+- Currency: CLP with dot thousands, e.g. $1.234.567.
+- Dates: dd/MM/yyyy or "d de MMMM a las HH:mm" (date-fns es locale).
+- Database uses Spanish table/column names.
+- Backend: Node 22, Express/Fastify, TypeScript, Prisma, PostgreSQL (Supabase).
+- Frontend: Next.js/Vite, TypeScript, shadcn/ui, Tailwind, mobile-first.
+- Security: JWT (access/refresh) with rotation, rate limits, helmet, HTTPS.
+- Never commit .env or secrets; keep environment per service.
+- Source of truth: IMPLEMENTATION_PLAN.md; see CURSOR.md for details.
+
+When generating code:
+- Respect Spanish naming and Chilean formats (RUT, CLP, dates).
+- Optimize mobile ergonomics (≥44px touch targets).
+- Avoid long-running blocking calls; prefer efficient, testable code.
+
