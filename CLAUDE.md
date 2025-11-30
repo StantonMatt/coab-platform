@@ -27,14 +27,25 @@ coab-platform2/
 │       ├── 07.5-password-recovery.md
 │       └── 08-deploy-test.md
 │
-├── coab-backend/          # Backend API service (to be created)
+├── packages/
+│   └── coab-utils/        # Shared utilities (@coab/utils)
+│       ├── src/
+│       │   ├── index.ts   # Re-exports all utilities
+│       │   ├── rut.ts     # RUT validation (Modulus 11)
+│       │   ├── currency.ts # Chilean Peso formatting
+│       │   └── dates.ts   # Date formatting with es-CL locale
+│       ├── package.json
+│       └── tsconfig.json
+│
+├── coab-backend/          # Backend API service
 │   ├── .env               # Environment configuration (not in version control)
 │   └── .mcp.json          # MCP configuration
 │
-├── coab-frontend/         # Frontend Vite application (to be created)
+├── coab-frontend/         # Frontend Vite application
 │   ├── .env               # Frontend environment configuration
 │   └── .mcp.json          # MCP configuration
 │
+├── package.json           # Root package with npm workspaces
 ├── IMPLEMENTATION_PLAN.md # Main implementation guide (index)
 ├── PRD_COMPLETE.md        # Complete Product Requirements
 └── CLAUDE.md              # This file
@@ -69,7 +80,7 @@ Project is in **planning phase** with comprehensive implementation plan ready.
 | 5 | Admin Customer Search | 2-3 days | [→ Details](.claude/iterations/05-admin-search.md) |
 | 6 | Payment Entry - FIFO + Validation | 4-5 days | [→ Details](.claude/iterations/06-payment-entry.md) |
 | 7 | Password Setup - WhatsApp Link | 2-3 days | [→ Details](.claude/iterations/07-password-setup.md) |
-| 7.5 | Self-Service Password Recovery ✨ NEW | 1-2 days | [→ Details](.claude/iterations/07.5-password-recovery.md) |
+| 7.5 | Self-Service Password Recovery | 1-2 days | [→ Details](.claude/iterations/07.5-password-recovery.md) |
 | 8 | Production Deployment + Comprehensive Testing | 6-7 days | [→ Details](.claude/iterations/08-deploy-test.md) |
 
 **Total Timeline:** 7-8 weeks (37-40 days)
@@ -93,16 +104,20 @@ Project is in **planning phase** with comprehensive implementation plan ready.
 **Production Readiness:**
 - Sentry error tracking (free tier)
 - UptimeRobot monitoring (free tier)
-- Render cold start prevention (cron job)
+- Railway cold start prevention (cron job)
 - Backup verification strategy
 
 **User Experience:**
-- Self-service password recovery (Iteration 7.5) ✨ NEW
+- Self-service password recovery (Iteration 7.5)
 - Data migration for 355 existing customers
 - Real device testing (iOS Safari, Android Chrome)
 - Comprehensive edge case testing (2 days)
 
-See [REVIEWER_FEEDBACK_V2.md](REVIEWER_FEEDBACK_V2.md) for complete details.
+**⚠️ External Dependency - Infobip WhatsApp:**
+- **Action Required:** Start Infobip account setup on Day 1 of Iteration 1
+- **Timeline:** WhatsApp sender verification takes 1-3 business days
+- **Why:** Required for Iterations 7 and 7.5 (password setup/recovery via WhatsApp)
+- **Fallback:** If verification is delayed, admin can manually copy-paste setup links via personal WhatsApp
 
 ## Key Architectural Decisions
 
@@ -115,7 +130,7 @@ See [REVIEWER_FEEDBACK_V2.md](REVIEWER_FEEDBACK_V2.md) for complete details.
    - JWT with access (24h customer, 8h admin) and refresh (30d) tokens using `jose` library
    - Refresh token rotation for security
    - Account lockout: 5 attempts, 15-minute lock
-3. **Security**: helmet, CORS, rate limiting (100 req/15min general, 5 req/15min auth), HTTPS enforcement in production
+3. **Security**: helmet, CORS, rate limiting (100 req/15min general, 5 req/15min auth, 3 req/15min password recovery per RUT), HTTPS enforcement in production
 4. **Payment Processing**:
    - Manual payment entry by admin (FIFO application to boletas)
    - ~~Transbank WebPay Plus~~ (Phase 2)
@@ -150,6 +165,7 @@ Both services require `.env` files (already exist but not version controlled):
 ```
 NODE_ENV=development|test|staging|production
 PORT=3000
+TZ=America/Santiago
 DATABASE_URL=postgresql://...
 JWT_SECRET=<32+ chars>
 INFOBIP_API_KEY=<optional>
@@ -165,41 +181,33 @@ VITE_API_URL=http://localhost:3000/api/v1
 
 ## Common Patterns
 
-### Chilean RUT Validation (Both Frontend & Backend)
+### Shared Utilities (@coab/utils)
+
+All Chilean-specific utilities are centralized in the `@coab/utils` package:
+
 ```typescript
-function validarRUT(rutStr: string): boolean {
-  const cleaned = rutStr.replace(/[.-]/g, '');
-  if (cleaned.length < 8 || cleaned.length > 9) return false; // cuerpo: 7-8 dígitos + DV
-  const body = cleaned.slice(0, -1);
-  const dv = cleaned.slice(-1).toUpperCase();
-  let sum = 0;
-  let multiplier = 2;
-  for (let i = body.length - 1; i >= 0; i--) {
-    sum += Number(body[i]) * multiplier;
-    multiplier = multiplier === 7 ? 2 : multiplier + 1;
-  }
-  const expectedDV = 11 - (sum % 11);
-  const calculatedDV = expectedDV === 11 ? '0' : expectedDV === 10 ? 'K' : String(expectedDV);
-  return dv === calculatedDV;
-}
+// Import in any frontend or backend file
+import {
+  validarRUT,      // Validates RUT using Modulus 11 algorithm
+  formatearRUT,    // Formats as XX.XXX.XXX-X
+  limpiarRUT,      // Removes formatting (digits + K only)
+  formatearPesos,  // Formats as $1.234.567 (CLP)
+  formatearFecha,  // Formats dates with es-CL locale
+  FORMATOS_FECHA   // Common date format constants
+} from '@coab/utils';
+
+// Examples
+validarRUT('12.345.678-5');           // true
+formatearRUT('123456785');            // '12.345.678-5'
+formatearPesos(1234567);              // '$1.234.567'
+formatearFecha(new Date(), FORMATOS_FECHA.LARGO); // '15 de octubre de 2025'
 ```
 
-### RUT Formatting (Frontend)
-```typescript
-function formatRut(value: string): string {
-  const cleaned = value.replace(/[^0-9kK]/g, '');
-  if (cleaned.length <= 1) return cleaned;
-  const body = cleaned.slice(0, -1);
-  const dv = cleaned.slice(-1);
-  const formatted = body.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1.');
-  return `${formatted}-${dv}`;
-}
-```
-
-### Chilean Currency Formatting
-```typescript
-const formatted = amount.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });
-```
+**Available date formats:**
+- `FORMATOS_FECHA.CORTO` - dd/MM/yyyy (e.g., 15/10/2025)
+- `FORMATOS_FECHA.LARGO` - d 'de' MMMM 'de' yyyy (e.g., 15 de octubre de 2025)
+- `FORMATOS_FECHA.CON_HORA` - d 'de' MMMM 'a las' HH:mm
+- `FORMATOS_FECHA.MES_ANIO` - MMMM yyyy (e.g., octubre 2025)
 
 ### Error Response Structure (Backend)
 ```typescript
@@ -228,6 +236,32 @@ Key tables:
 - `notificaciones_whatsapp`: WhatsApp messages with mensaje_id_externo, estado_entrega
 - `generaciones_pdf`: PDF generation tracking with periodo, tipo_generacion, pdfs_generados
 
+### Audit Trail (`logs_auditoria`)
+
+All admin and sensitive customer actions are logged for compliance and debugging:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `accion` | String | Action type (see below) |
+| `entidad` | String | Entity affected (cliente, transaccion_pago, etc.) |
+| `entidad_id` | BigInt | ID of affected entity |
+| `usuario_tipo` | String | 'admin', 'cliente', or 'system' |
+| `usuario_email` | String | Email of user who performed action |
+| `datos_anteriores` | JSON | State before change |
+| `datos_nuevos` | JSON | State after change |
+| `ip_address` | String | Client IP address |
+| `user_agent` | String | Browser/client identifier |
+| `creado_en` | DateTime | Timestamp |
+
+**Key Action Types:**
+- `REGISTRO_PAGO` - Payment registered by admin
+- `DESBLOQUEO_CUENTA` - Customer account unlocked by admin
+- `GENERAR_TOKEN_SETUP` - Password setup link generated
+- `CONFIGURAR_CONTRASENA` - Customer set their password
+- `SOLICITAR_RESET` - Password reset requested
+- `RESET_CONTRASENA_EXITOSO` - Password reset completed
+- `RESET_CODIGO_INVALIDO` - Failed reset code attempt
+
 ## Security Considerations
 
 1. **Never commit** `.env` files or secrets to version control
@@ -237,6 +271,7 @@ Key tables:
 5. **HTTPS Only**: Enforce in production; Transbank requires secure return URLs
 6. **Token Rotation**: Refresh tokens must rotate on use; detect reuse and revoke chain
 7. **Rate Limiting**: Aggressive on auth endpoints (5 attempts lockout)
+8. **Token Storage (MVP)**: Access and refresh tokens stored in `localStorage`. Mitigate XSS risk with strict CSP headers and avoiding `dangerouslySetInnerHTML`. Future consideration: migrate refresh tokens to httpOnly cookies for enhanced security.
 
 ## Performance Targets
 
@@ -244,8 +279,8 @@ Key tables:
 - Search with pagination: <200ms with 10k records
 - Reports/aggregations: <2s
 - FTP daily import: <10 minutes for ~10k records
-- Frontend FCP on 3G: <1.5s
-- Lighthouse mobile: >90
+- Frontend FCP on 3G: <2.5s
+- Lighthouse mobile: >85
 
 ## Testing Strategy
 
@@ -265,8 +300,9 @@ Each task has detailed test strategies. General patterns:
 
 ## Important Notes
 
-- **No package.json yet**: Projects are in planning phase; setup will be done in Task 1 for each service
+- **Monorepo Structure**: This project uses npm workspaces with a root `package.json`. The shared `@coab/utils` package is created in Iteration 1, Task 1.0 before backend/frontend setup.
+- **Shared Package**: Always import Chilean utilities (`validarRUT`, `formatearPesos`, etc.) from `@coab/utils` - never duplicate this code in backend or frontend.
 - **Task Dependencies**: Follow task order in implementation plans; some tasks have explicit dependencies
 - **Chilean Context**: Always validate RUT format, use Spanish error messages, format currency as CLP
 - **Mobile Priority**: Customer portal is mobile-first; admin portal is desktop-optimized
-- **Documentation**: Detailed implementation steps and test strategies are in task JSON files
+- **Documentation**: Detailed implementation steps and test strategies are in iteration markdown files

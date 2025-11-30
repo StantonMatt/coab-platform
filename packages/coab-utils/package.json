@@ -1,0 +1,41 @@
+{
+  "name": "@coab/utils",
+  "version": "1.0.0",
+  "description": "Shared utilities for COAB Platform - Chilean RUT validation, currency formatting, dates",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "chile",
+    "rut",
+    "clp",
+    "utilities"
+  ],
+  "author": "COAB",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "date-fns": "^4.1.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ]
+}
+

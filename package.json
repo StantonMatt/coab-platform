@@ -1,0 +1,30 @@
+{
+  "name": "coab-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "COAB Platform - Chilean Water Utility Customer Portal & Admin Dashboard",
+  "workspaces": [
+    "packages/*",
+    "coab-backend",
+    "coab-frontend"
+  ],
+  "scripts": {
+    "build:utils": "npm run build -w @coab/utils",
+    "test:utils": "npm run test -w @coab/utils",
+    "dev:backend": "npm run dev -w coab-backend",
+    "dev:frontend": "npm run dev -w coab-frontend",
+    "build": "npm run build -w @coab/utils && npm run build -w coab-backend && npm run build -w coab-frontend",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "keywords": [
+    "chile",
+    "water-utility",
+    "coab"
+  ],
+  "author": "COAB",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
+

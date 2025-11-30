@@ -1,30 +1,35 @@
 # ITERATION 6: Payment Entry (Manual)
 
-**Goal:** Admin can register manual payments with proper validation, audit logging, and instant receipt printing
-
-**Duration:** 4-5 days (+2 hours audit logging, +3 hours receipt printing)
+**Goal:** Admin can register manual payments with proper validation, FIFO application, audit logging, and instant receipt printing
 
 **You'll Be Able To:** Enter payments, print receipts, and see complete audit trail
 
+**Prerequisites:**
+- Iteration 1 complete (`TransaccionPago`, `LogAuditoria`, `Boleta` tables with `notas` field defined)
+- Iteration 5 complete (admin can view customer profiles)
+
 ---
 
-## Backend Tasks (Day 1)
+## Backend Tasks
 
 ### Task 6.1: Payment Creation API with FIFO Application
-**Time:** 1 day (8 hours)
 
-**CRITICAL:** Payment application logic is core business function, not optional. Complex transactions require thorough testing.
+**CRITICAL:** Payment application logic is core business function. Complex transactions require:
+- Database transaction with proper isolation
+- FIFO order (oldest boleta first)
+- Audit logging for compliance
+- Error recovery with rollback
 
-**Create:** `src/schemas/payment.schema.ts` - Input validation with Zod v4
+**Create:** `src/schemas/payment.schema.ts`
 
 ```typescript
 // src/schemas/payment.schema.ts
 import { z } from 'zod';
 
 export const paymentSchema = z.object({
-  clienteId: z.string().transform((val) => BigInt(val)),
-  monto: z.number().positive('Monto debe ser mayor a 0'),
-  tipoPago: z.enum(['Efectivo', 'Transferencia', 'Cheque'], {
+  clienteId: z.string().regex(/^\d+$/, 'ID de cliente inválido'),
+  monto: z.number().positive('Monto debe ser mayor a 0').int('Monto debe ser entero'),
+  tipoPago: z.enum(['efectivo', 'transferencia', 'cheque'], {
     errorMap: () => ({ message: 'Tipo de pago inválido' })
   }),
   numeroTransaccion: z.string().max(100).optional(),
@@ -36,15 +41,19 @@ export type PaymentInput = z.infer<typeof paymentSchema>;
 
 **Update:** `src/services/admin.service.ts`
 
-Add `registrarPago()` method with FIFO boleta application and error recovery:
+Add `registrarPago()` method with FIFO boleta application, transaction isolation, and audit logging:
 
 ```typescript
 // src/services/admin.service.ts
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { PaymentInput } from '../schemas/payment.schema.js';
 
 const prisma = new PrismaClient();
 
+/**
+ * Register a manual payment with FIFO application to boletas
+ * Uses database transaction with row-level locking for concurrent safety
+ */
 export async function registrarPago(
   data: PaymentInput,
   operadorEmail: string,
@@ -52,33 +61,58 @@ export async function registrarPago(
   userAgent: string,
   logger: any
 ) {
+  const clienteId = BigInt(data.clienteId);
+
   try {
     return await prisma.$transaction(async (tx) => {
-      // 1. Create payment record
-      const pago = await tx.transaccion_pago.create({
+      // 1. Verify customer exists
+      const cliente = await tx.cliente.findUnique({
+        where: { id: clienteId },
+        select: { id: true, rut: true, nombre_completo: true, saldo_actual: true }
+      });
+
+      if (!cliente) {
+        throw new Error('Cliente no encontrado');
+      }
+
+      const saldoAnterior = cliente.saldo_actual;
+
+      // 2. Create payment record
+      const pago = await tx.transaccionPago.create({
         data: {
-          cliente_id: data.clienteId,
+          cliente_id: clienteId,
           monto: data.monto,
           fecha_pago: new Date(),
-          metodo_pago: data.tipoPago.toLowerCase(),
+          metodo_pago: data.tipoPago,
           estado_transaccion: 'completado',
-          referencia_externa: data.numeroTransaccion,
-          observaciones: data.observaciones,
+          referencia_externa: data.numeroTransaccion || null,
+          observaciones: data.observaciones || null,
           operador: operadorEmail
         }
       });
 
-      // 2. Apply payment to boletas (FIFO - oldest unpaid first)
-      const boletasPendientes = await tx.boleta.findMany({
-        where: {
-          cliente_id: data.clienteId,
-          estado: 'pendiente'
-        },
-        orderBy: { fecha_emision: 'asc' } // FIFO - oldest first
-      });
+      // 3. Get pending boletas with row-level lock (FOR UPDATE)
+      // This prevents concurrent payments from applying to same boletas
+      const boletasPendientes = await tx.$queryRaw<Array<{
+        id: bigint;
+        monto_total: number;
+        fecha_emision: Date;
+        notas: string | null;
+      }>>`
+        SELECT id, monto_total, fecha_emision, notas
+        FROM boletas
+        WHERE cliente_id = ${clienteId} AND estado = 'pendiente'
+        ORDER BY fecha_emision ASC
+        FOR UPDATE
+      `;
 
+      // 4. Apply payment to boletas (FIFO - oldest first)
       let montoRestante = data.monto;
-      const boletasAfectadas = [];
+      const boletasAfectadas: Array<{
+        boletaId: string;
+        montoAplicado: number;
+        tipo: 'completo' | 'parcial';
+      }> = [];
 
       for (const boleta of boletasPendientes) {
         if (montoRestante <= 0) break;
@@ -105,11 +139,12 @@ export async function registrarPago(
         } else {
           // Partial payment - add note
           const notaActual = boleta.notas || '';
-          const nuevaNota = `${notaActual}\nPago parcial (${new Date().toLocaleDateString('es-CL')}): $${montoRestante.toLocaleString('es-CL')} - Ref: ${pago.id}`;
+          const fechaHoy = new Date().toLocaleDateString('es-CL');
+          const nuevaNota = `${notaActual}\n[${fechaHoy}] Pago parcial: $${montoRestante.toLocaleString('es-CL')} - Ref: ${pago.id}`.trim();
 
           await tx.boleta.update({
             where: { id: boleta.id },
-            data: { notas: nuevaNota.trim() }
+            data: { notas: nuevaNota }
           });
 
           boletasAfectadas.push({
@@ -122,20 +157,21 @@ export async function registrarPago(
         }
       }
 
-      // 3. If money left over, note it
+      // 5. If money left over (overpayment), note it
+      let observacionesFinal = data.observaciones || '';
       if (montoRestante > 0) {
-        await tx.transaccion_pago.update({
+        observacionesFinal = `${observacionesFinal}\n[Saldo a favor: $${montoRestante.toLocaleString('es-CL')}]`.trim();
+        
+        await tx.transaccionPago.update({
           where: { id: pago.id },
-          data: {
-            observaciones: `${data.observaciones || ''}\nSaldo a favor: $${montoRestante.toLocaleString('es-CL')}`.trim()
-          }
+          data: { observaciones: observacionesFinal }
         });
       }
 
-      // 4. Update customer balance (denormalized for performance)
+      // 6. Recalculate and update customer balance
       const nuevoSaldo = await tx.boleta.aggregate({
         where: {
-          cliente_id: data.clienteId,
+          cliente_id: clienteId,
           estado: 'pendiente'
         },
         _sum: {
@@ -143,16 +179,18 @@ export async function registrarPago(
         }
       });
 
+      const saldoNuevo = Number(nuevoSaldo._sum.monto_total || 0);
+
       await tx.cliente.update({
-        where: { id: data.clienteId },
+        where: { id: clienteId },
         data: {
-          saldo_actual: Number(nuevoSaldo._sum.monto_total || BigInt(0)),
-          estado_cuenta: Number(nuevoSaldo._sum.monto_total || BigInt(0)) > 0 ? 'MOROSO' : 'AL_DIA'
+          saldo_actual: saldoNuevo,
+          estado_cuenta: saldoNuevo > 0 ? 'MOROSO' : 'AL_DIA'
         }
       });
 
-      // 5. **AUDIT LOGGING** (NEW - Critical for compliance)
-      await tx.log_auditoria.create({
+      // 7. Create audit log entry
+      await tx.logAuditoria.create({
         data: {
           accion: 'REGISTRO_PAGO',
           entidad: 'transaccion_pago',
@@ -160,14 +198,15 @@ export async function registrarPago(
           usuario_tipo: 'admin',
           usuario_email: operadorEmail,
           datos_anteriores: {
-            saldoAnterior: Number(nuevoSaldo._sum.monto_total || BigInt(0)) + data.monto
+            saldoAnterior: saldoAnterior
           },
           datos_nuevos: {
             pagoId: pago.id.toString(),
             monto: data.monto,
             metodoPago: data.tipoPago,
             boletasAfectadas: boletasAfectadas.length,
-            saldoNuevo: Number(nuevoSaldo._sum.monto_total || BigInt(0))
+            saldoNuevo: saldoNuevo,
+            saldoAFavor: montoRestante > 0 ? montoRestante : 0
           },
           ip_address: ipAddress,
           user_agent: userAgent
@@ -175,7 +214,8 @@ export async function registrarPago(
       });
 
       logger.info('Payment successfully applied', {
-        clienteId: data.clienteId.toString(),
+        clienteId: clienteId.toString(),
+        clienteRut: cliente.rut,
         monto: data.monto,
         boletasAfectadas: boletasAfectadas.length,
         saldoRestante: montoRestante,
@@ -187,15 +227,29 @@ export async function registrarPago(
           id: pago.id.toString(),
           monto: pago.monto,
           fecha_pago: pago.fecha_pago,
-          metodo_pago: pago.metodo_pago
+          metodo_pago: pago.metodo_pago,
+          referencia_externa: pago.referencia_externa,
+          observaciones: pago.observaciones,
+          operador: pago.operador
+        },
+        cliente: {
+          id: cliente.id.toString(),
+          rut: cliente.rut,
+          nombre: cliente.nombre_completo
         },
         boletasAfectadas,
-        saldoRestante: montoRestante
+        saldoRestante: montoRestante,
+        saldoNuevo
       };
+    }, {
+      // Transaction options for better isolation
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 5000, // 5 seconds max wait
+      timeout: 10000 // 10 seconds timeout
     });
   } catch (error: any) {
     logger.error('Payment application failed - transaction rolled back', {
-      clienteId: data.clienteId.toString(),
+      clienteId: data.clienteId,
       monto: data.monto,
       tipoPago: data.tipoPago,
       operador: operadorEmail,
@@ -203,8 +257,13 @@ export async function registrarPago(
       stack: error.stack
     });
 
+    // Re-throw with user-friendly message
+    if (error.message === 'Cliente no encontrado') {
+      throw error;
+    }
+
     throw new Error(
-      `Error al procesar pago. No se realizaron cambios. Referencia: ${Date.now()}`
+      `Error al procesar pago. No se realizaron cambios. Por favor intente nuevamente.`
     );
   }
 }
@@ -215,57 +274,55 @@ export async function registrarPago(
 Add payment registration endpoint:
 
 ```typescript
-// src/routes/admin.routes.ts
-import { FastifyPluginAsync } from 'fastify';
+// Add to src/routes/admin.routes.ts
 import { paymentSchema } from '../schemas/payment.schema.js';
-import * as adminService from '../services/admin.service.js';
-import { requireAdmin } from '../middleware/auth.middleware.js';
 
-const adminRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.addHook('onRequest', requireAdmin);
+// POST /admin/pagos
+fastify.post('/pagos', async (request, reply) => {
+  try {
+    // Validate input with Zod
+    const validatedData = paymentSchema.parse(request.body);
 
-  // POST /admin/pagos
-  fastify.post('/pagos', async (request, reply) => {
-    try {
-      // Validate input with Zod
-      const validatedData = paymentSchema.parse(request.body);
+    const result = await adminService.registrarPago(
+      validatedData,
+      request.user!.email!,
+      request.ip,
+      request.headers['user-agent'] || 'unknown',
+      fastify.log
+    );
 
-      const result = await adminService.registrarPago(
-        validatedData,
-        request.user!.email, // From JWT middleware
-        request.ip, // IP address for audit trail
-        request.headers['user-agent'] || 'unknown', // User agent for audit trail
-        fastify.log
-      );
-
-      return reply.code(201).send(result);
-    } catch (error: any) {
-      if (error.name === 'ZodError') {
-        return reply.code(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Datos de pago inválidos',
-            details: error.errors
-          }
-        });
-      }
-
-      fastify.log.error('Payment registration error', error);
-
-      return reply.code(500).send({
+    return reply.code(201).send(result);
+  } catch (error: any) {
+    if (error.name === 'ZodError') {
+      return reply.code(400).send({
         error: {
-          code: 'PAYMENT_ERROR',
-          message: error.message
+          code: 'VALIDATION_ERROR',
+          message: 'Datos de pago inválidos',
+          details: error.errors
         }
       });
     }
-  });
-};
 
-export default adminRoutes;
+    if (error.message === 'Cliente no encontrado') {
+      return reply.code(404).send({
+        error: { code: 'NOT_FOUND', message: error.message }
+      });
+    }
+
+    fastify.log.error('Payment registration error', error);
+
+    return reply.code(500).send({
+      error: {
+        code: 'PAYMENT_ERROR',
+        message: error.message
+      }
+    });
+  }
+});
 ```
 
 **Test Edge Cases:**
+
 ```bash
 # Test 1: Normal payment
 curl -X POST http://localhost:3000/api/v1/admin/pagos \
@@ -274,7 +331,7 @@ curl -X POST http://localhost:3000/api/v1/admin/pagos \
   -d '{
     "clienteId": "123",
     "monto": 25000,
-    "tipoPago": "Efectivo",
+    "tipoPago": "efectivo",
     "observaciones": "Pago en oficina"
   }'
 
@@ -287,7 +344,7 @@ curl -X POST http://localhost:3000/api/v1/admin/pagos \
   -d '{
     "clienteId": "123",
     "monto": 100000,
-    "tipoPago": "Transferencia"
+    "tipoPago": "transferencia"
   }'
 
 # Expected: 201 Created with saldoRestante > 0
@@ -299,7 +356,7 @@ curl -X POST http://localhost:3000/api/v1/admin/pagos \
   -d '{
     "clienteId": "123",
     "monto": -500,
-    "tipoPago": "Efectivo"
+    "tipoPago": "efectivo"
   }'
 
 # Expected: 400 with Zod validation error
@@ -311,43 +368,13 @@ curl -X POST http://localhost:3000/api/v1/admin/pagos \
   -d '{
     "clienteId": "123",
     "monto": 5000,
-    "tipoPago": "Bitcoin"
+    "tipoPago": "bitcoin"
   }'
 
 # Expected: 400 with Zod validation error
-
-# Test 5: Concurrent payments (open 2 terminals, run simultaneously)
-# Terminal 1:
-curl -X POST http://localhost:3000/api/v1/admin/pagos \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "clienteId": "123",
-    "monto": 10000,
-    "tipoPago": "Efectivo"
-  }'
-
-# Terminal 2 (at same time):
-curl -X POST http://localhost:3000/api/v1/admin/pagos \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "clienteId": "123",
-    "monto": 10000,
-    "tipoPago": "Efectivo"
-  }'
-
-# Expected: Both should succeed, verify boletas applied correctly in FIFO order
-
-# Test 6: Database verification
-psql $DATABASE_URL -c "SELECT * FROM transaccion_pago WHERE cliente_id = 123 ORDER BY fecha_pago DESC LIMIT 5;"
-psql $DATABASE_URL -c "SELECT id, fecha_emision, monto_total, estado FROM boleta WHERE cliente_id = 123 ORDER BY fecha_emision ASC;"
-
-# Test 7: Audit trail verification (NEW)
-psql $DATABASE_URL -c "SELECT * FROM log_auditoria WHERE accion = 'REGISTRO_PAGO' ORDER BY created_at DESC LIMIT 5;"
 ```
 
-**Why Audit Logging Matters (NEW - Added based on professional review):**
+**Why Audit Logging Matters:**
 
 The `logs_auditoria` table provides a **permanent, immutable record** of all admin actions. This is critical for:
 
@@ -365,58 +392,45 @@ SELECT
   datos_nuevos->>'monto' AS monto,
   datos_nuevos->>'metodoPago' AS metodo,
   ip_address,
-  created_at
-FROM log_auditoria
+  creado_en
+FROM logs_auditoria
 WHERE accion = 'REGISTRO_PAGO'
-  AND datos_nuevos->>'clienteId' = '123'
-ORDER BY created_at DESC;
+  AND (datos_nuevos->>'clienteId')::bigint = 123
+ORDER BY creado_en DESC;
 
 -- What did this admin do today?
 SELECT
   accion,
   entidad,
   datos_nuevos,
-  created_at
-FROM log_auditoria
+  creado_en
+FROM logs_auditoria
 WHERE usuario_email = 'admin@coab.cl'
-  AND created_at >= CURRENT_DATE
-ORDER BY created_at DESC;
-
--- Payments registered from suspicious IP
-SELECT
-  usuario_email,
-  datos_nuevos,
-  created_at
-FROM log_auditoria
-WHERE accion = 'REGISTRO_PAGO'
-  AND ip_address = '192.168.1.100'
-ORDER BY created_at DESC;
+  AND creado_en >= CURRENT_DATE
+ORDER BY creado_en DESC;
 ```
 
 **Acceptance Criteria:**
-- [ ] Creates payment in `transaccion_pago` table
+- [ ] Creates payment in `transacciones_pago` table
 - [ ] Applies payment to boletas in FIFO order (oldest first)
+- [ ] Uses `FOR UPDATE` row locking for concurrent safety
 - [ ] Marks boletas as 'pagada' when fully paid
 - [ ] Adds partial payment notes to boletas
 - [ ] Handles overpayment (saldo a favor noted in observaciones)
-- [ ] Uses database transaction (all or nothing - rollback on error)
+- [ ] Uses database transaction with Serializable isolation
 - [ ] Returns detailed breakdown of applied amounts
 - [ ] Records admin email in `operador` field
-- [ ] **Input validation with Zod v4 (rejects invalid data)**
-- [ ] **Error recovery with detailed Pino logging**
-- [ ] **Concurrent payments tested and work correctly**
-- [ ] **All edge cases tested (overpayment, partial, concurrent)**
+- [ ] Input validation with Zod (rejects invalid data)
+- [ ] Error recovery with transaction rollback
 - [ ] Updates denormalized `saldo_actual` on customer record
-- [ ] **Audit trail created in `logs_auditoria` table (NEW)**
-- [ ] **Audit record includes: accion, usuario_email, ip_address, user_agent, datos_anteriores, datos_nuevos**
-- [ ] **Audit queries work correctly (verify with test SQL queries above)**
+- [ ] Audit trail created in `logs_auditoria` table
+- [ ] Audit record includes: accion, usuario_email, ip_address, user_agent, datos_anteriores, datos_nuevos
 
 ---
 
-## Frontend Tasks (Day 2-3)
+## Frontend Tasks
 
 ### Task 6.2: Payment Entry Modal
-**Time:** 4 hours
 
 **Create:** `src/components/admin/PaymentEntryModal.tsx`
 
@@ -444,32 +458,67 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import apiClient from '@/lib/api';
+import adminApiClient from '@/lib/adminApi';
+import { formatearPesos } from '@coab/utils';
 
 const paymentFormSchema = z.object({
-  monto: z.number().positive('Monto debe ser mayor a 0'),
-  tipoPago: z.enum(['Efectivo', 'Transferencia', 'Cheque']),
+  monto: z.number().positive('Monto debe ser mayor a 0').int('Monto debe ser entero'),
+  tipoPago: z.enum(['efectivo', 'transferencia', 'cheque']),
   numeroTransaccion: z.string().max(100).optional(),
   observaciones: z.string().max(500).optional()
 });
 
 type PaymentFormData = z.infer<typeof paymentFormSchema>;
 
+interface PaymentResult {
+  pago: {
+    id: string;
+    monto: number;
+    fecha_pago: string;
+    metodo_pago: string;
+    operador: string;
+    referencia_externa?: string;
+    observaciones?: string;
+  };
+  cliente: {
+    id: string;
+    rut: string;
+    nombre: string;
+  };
+  boletasAfectadas: Array<{
+    boletaId: string;
+    montoAplicado: number;
+    tipo: 'completo' | 'parcial';
+  }>;
+  saldoRestante: number;
+  saldoNuevo: number;
+}
+
 interface PaymentEntryModalProps {
   open: boolean;
   onClose: () => void;
   clienteId: string;
   clienteNombre: string;
+  clienteRut: string;
+  clienteDireccion?: string;
+  saldoActual: number;
+  onSuccess?: (result: PaymentResult) => void;
 }
 
 export default function PaymentEntryModal({
   open,
   onClose,
   clienteId,
-  clienteNombre
+  clienteNombre,
+  clienteRut,
+  clienteDireccion,
+  saldoActual,
+  onSuccess
 }: PaymentEntryModalProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [paymentResult, setPaymentResult] = useState<PaymentResult | null>(null);
 
   const {
     register,
@@ -481,24 +530,28 @@ export default function PaymentEntryModal({
   } = useForm<PaymentFormData>({
     resolver: zodResolver(paymentFormSchema),
     defaultValues: {
-      tipoPago: 'Efectivo'
+      tipoPago: 'efectivo'
     }
   });
 
   const tipoPago = watch('tipoPago');
+  const monto = watch('monto');
 
   const paymentMutation = useMutation({
     mutationFn: async (data: PaymentFormData) => {
-      const response = await apiClient.post('/admin/pagos', {
+      const response = await adminApiClient.post('/admin/pagos', {
         clienteId,
         ...data
       });
-      return response.data;
+      return response.data as PaymentResult;
     },
     onSuccess: (data) => {
+      setPaymentResult(data);
+      setShowReceipt(true);
+
       toast({
         title: 'Pago registrado exitosamente',
-        description: `${data.boletasAfectadas.length} boleta(s) afectada(s). Saldo restante: $${data.saldoRestante.toLocaleString('es-CL')}`
+        description: `${data.boletasAfectadas.length} boleta(s) afectada(s). Nuevo saldo: ${formatearPesos(data.saldoNuevo)}`
       });
 
       // Invalidate queries to refresh data
@@ -506,8 +559,9 @@ export default function PaymentEntryModal({
       queryClient.invalidateQueries({ queryKey: ['admin-customer-payments', clienteId] });
       queryClient.invalidateQueries({ queryKey: ['admin-customer-boletas', clienteId] });
 
-      reset();
-      onClose();
+      if (onSuccess) {
+        onSuccess(data);
+      }
     },
     onError: (error: any) => {
       const errorMessage = error.response?.data?.error?.message || 'Error al registrar pago';
@@ -523,12 +577,162 @@ export default function PaymentEntryModal({
     paymentMutation.mutate(data);
   };
 
+  const handleClose = () => {
+    reset();
+    setShowReceipt(false);
+    setPaymentResult(null);
+    onClose();
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // Receipt View
+  if (showReceipt && paymentResult) {
+    return (
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="max-w-2xl print:max-w-none print:shadow-none">
+          <style>{`
+            @media print {
+              body * { visibility: hidden; }
+              .print-receipt, .print-receipt * { visibility: visible; }
+              .print-receipt { position: absolute; left: 0; top: 0; width: 100%; }
+              .no-print { display: none !important; }
+            }
+          `}</style>
+
+          <div className="print-receipt">
+            {/* Receipt Header */}
+            <div className="text-center mb-6 pb-4 border-b-2">
+              <h1 className="text-2xl font-bold">COAB - Compañía de Agua</h1>
+              <p className="text-gray-600">Comprobante de Pago</p>
+            </div>
+
+            {/* Payment Details */}
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div>
+                <p className="text-sm text-gray-600">Recibo N°</p>
+                <p className="text-lg font-bold">#{paymentResult.pago.id}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Fecha</p>
+                <p className="text-lg">
+                  {new Date(paymentResult.pago.fecha_pago).toLocaleDateString('es-CL', {
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric'
+                  })}
+                </p>
+              </div>
+            </div>
+
+            {/* Customer Info */}
+            <div className="mb-6 p-4 bg-gray-50 rounded">
+              <p className="text-sm text-gray-600 mb-1">Cliente</p>
+              <p className="font-medium">{paymentResult.cliente.nombre}</p>
+              <p className="text-sm text-gray-600">RUT: {paymentResult.cliente.rut}</p>
+              {clienteDireccion && (
+                <p className="text-sm text-gray-600">{clienteDireccion}</p>
+              )}
+            </div>
+
+            {/* Amount */}
+            <div className="mb-6 p-6 bg-primary-blue text-white rounded-lg text-center">
+              <p className="text-sm opacity-90 mb-2">Monto Pagado</p>
+              <p className="text-4xl font-bold">
+                {formatearPesos(paymentResult.pago.monto)}
+              </p>
+            </div>
+
+            {/* Payment Method */}
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div>
+                <p className="text-sm text-gray-600">Método de Pago</p>
+                <p className="font-medium capitalize">{paymentResult.pago.metodo_pago}</p>
+              </div>
+              {paymentResult.pago.referencia_externa && (
+                <div>
+                  <p className="text-sm text-gray-600">N° Transacción</p>
+                  <p className="font-medium">{paymentResult.pago.referencia_externa}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Boletas Applied */}
+            {paymentResult.boletasAfectadas.length > 0 && (
+              <div className="mb-6">
+                <p className="text-sm text-gray-600 mb-2">Boletas Aplicadas</p>
+                <div className="space-y-1">
+                  {paymentResult.boletasAfectadas.map((boleta, index) => (
+                    <div key={index} className="flex justify-between text-sm">
+                      <span>Boleta #{boleta.boletaId}</span>
+                      <span>
+                        {formatearPesos(boleta.montoAplicado)}
+                        {boleta.tipo === 'parcial' && ' (parcial)'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Overpayment Warning */}
+            {paymentResult.saldoRestante > 0 && (
+              <div className="mb-6 p-3 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
+                <p className="font-medium">Saldo a Favor</p>
+                <p className="text-sm">
+                  {formatearPesos(paymentResult.saldoRestante)} quedará como crédito
+                </p>
+              </div>
+            )}
+
+            {/* New Balance */}
+            <div className="mb-6 p-4 bg-gray-100 rounded text-center">
+              <p className="text-sm text-gray-600">Nuevo Saldo Pendiente</p>
+              <p className="text-2xl font-bold">
+                {formatearPesos(paymentResult.saldoNuevo)}
+              </p>
+            </div>
+
+            {/* Footer */}
+            <div className="text-center text-xs text-gray-500 pt-4 border-t">
+              <p>Operador: {paymentResult.pago.operador}</p>
+              <p className="mt-2">Este documento es un comprobante de pago válido</p>
+              <p>Conserve para sus registros</p>
+            </div>
+          </div>
+
+          {/* Action Buttons (hidden in print) */}
+          <div className="no-print flex gap-3 mt-6">
+            <Button onClick={handlePrint} className="flex-1">
+              Imprimir Comprobante
+            </Button>
+            <Button variant="outline" onClick={handleClose} className="flex-1">
+              Cerrar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  // Payment Form View
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Registrar Pago - {clienteNombre}</DialogTitle>
+          <DialogTitle>Registrar Pago</DialogTitle>
         </DialogHeader>
+
+        {/* Customer Info */}
+        <div className="p-3 bg-gray-50 rounded mb-4">
+          <p className="font-medium">{clienteNombre}</p>
+          <p className="text-sm text-gray-600">RUT: {clienteRut}</p>
+          <p className="text-sm text-gray-600">
+            Saldo actual: <span className="font-medium">{formatearPesos(saldoActual)}</span>
+          </p>
+        </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
@@ -537,12 +741,18 @@ export default function PaymentEntryModal({
               id="monto"
               type="number"
               step="1"
+              min="1"
               placeholder="25000"
               {...register('monto', { valueAsNumber: true })}
-              className={errors.monto ? 'border-red-500' : ''}
+              className={`h-11 text-lg ${errors.monto ? 'border-red-500' : ''}`}
             />
             {errors.monto && (
               <p className="text-sm text-red-500 mt-1">{errors.monto.message}</p>
+            )}
+            {monto && monto > saldoActual && saldoActual > 0 && (
+              <p className="text-sm text-yellow-600 mt-1">
+                ⚠️ Monto excede el saldo. El excedente quedará a favor.
+              </p>
             )}
           </div>
 
@@ -552,27 +762,25 @@ export default function PaymentEntryModal({
               value={tipoPago}
               onValueChange={(value) => setValue('tipoPago', value as any)}
             >
-              <SelectTrigger>
+              <SelectTrigger className="h-11">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="Efectivo">Efectivo</SelectItem>
-                <SelectItem value="Transferencia">Transferencia</SelectItem>
-                <SelectItem value="Cheque">Cheque</SelectItem>
+                <SelectItem value="efectivo">Efectivo</SelectItem>
+                <SelectItem value="transferencia">Transferencia</SelectItem>
+                <SelectItem value="cheque">Cheque</SelectItem>
               </SelectContent>
             </Select>
-            {errors.tipoPago && (
-              <p className="text-sm text-red-500 mt-1">{errors.tipoPago.message}</p>
-            )}
           </div>
 
-          {tipoPago === 'Transferencia' && (
+          {tipoPago === 'transferencia' && (
             <div>
-              <Label htmlFor="numeroTransaccion">Número de Transacción</Label>
+              <Label htmlFor="numeroTransaccion">N° de Transacción</Label>
               <Input
                 id="numeroTransaccion"
                 placeholder="1234567890"
                 {...register('numeroTransaccion')}
+                className="h-11"
               />
             </div>
           )}
@@ -591,11 +799,21 @@ export default function PaymentEntryModal({
             )}
           </div>
 
-          <div className="flex gap-2 justify-end">
-            <Button type="button" variant="outline" onClick={onClose}>
+          <div className="flex gap-3 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleClose}
+              className="flex-1 h-11"
+              disabled={paymentMutation.isPending}
+            >
               Cancelar
             </Button>
-            <Button type="submit" disabled={paymentMutation.isPending}>
+            <Button
+              type="submit"
+              className="flex-1 h-11"
+              disabled={paymentMutation.isPending}
+            >
               {paymentMutation.isPending ? 'Procesando...' : 'Registrar Pago'}
             </Button>
           </div>
@@ -606,42 +824,108 @@ export default function PaymentEntryModal({
 }
 ```
 
-**Update:** `src/pages/admin/CustomerProfile.tsx`
+### Task 6.3: Payment Entry Page (Alternative to Modal)
 
-Add "Registrar Pago" button functionality:
+**Create:** `src/pages/admin/PaymentEntry.tsx`
 
 ```typescript
-// Add to CustomerProfile.tsx
 import { useState } from 'react';
+import { useParams, useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import adminApiClient from '@/lib/adminApi';
+import { formatearRUT, formatearPesos } from '@coab/utils';
+import { ArrowLeft } from 'lucide-react';
 import PaymentEntryModal from '@/components/admin/PaymentEntryModal';
 
-export default function CustomerProfilePage() {
+export default function PaymentEntryPage() {
   const { id } = useParams<{ id: string }>();
-  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const navigate = useNavigate();
+  const [modalOpen, setModalOpen] = useState(true);
 
-  // ... existing code ...
+  const { data: customer, isLoading } = useQuery({
+    queryKey: ['admin-customer', id],
+    queryFn: async () => {
+      const res = await adminApiClient.get(`/admin/clientes/${id}`);
+      return res.data;
+    },
+    enabled: !!id
+  });
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        Cargando...
+      </div>
+    );
+  }
+
+  if (!customer) {
+    return (
+      <div className="min-h-screen flex items-center justify-center flex-col gap-4">
+        <p className="text-red-600">Cliente no encontrado</p>
+        <Button onClick={() => navigate('/admin/clientes')}>Volver</Button>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      {/* ... existing code ... */}
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white shadow-sm">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate(`/admin/clientes/${id}`)}
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="text-xl font-bold">Registrar Pago</h1>
+        </div>
+      </header>
 
-      <div className="mt-4 flex gap-2">
-        <Button onClick={() => setPaymentModalOpen(true)}>
-          Registrar Pago
-        </Button>
-        {/* ... other buttons ... */}
-      </div>
+      <main className="max-w-6xl mx-auto px-4 py-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>{customer.nombre_completo}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-gray-600">RUT: {formatearRUT(customer.rut)}</p>
+            <p className="text-gray-600">
+              Saldo: <span className="font-bold">{formatearPesos(customer.saldo_actual)}</span>
+            </p>
+          </CardContent>
+        </Card>
+      </main>
 
-      {/* Payment Modal */}
       <PaymentEntryModal
-        open={paymentModalOpen}
-        onClose={() => setPaymentModalOpen(false)}
+        open={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          navigate(`/admin/clientes/${id}`);
+        }}
         clienteId={id!}
-        clienteNombre={customer?.nombre_completo || ''}
+        clienteNombre={customer.nombre_completo}
+        clienteRut={formatearRUT(customer.rut)}
+        clienteDireccion={customer.direccion}
+        saldoActual={customer.saldo_actual}
+        onSuccess={() => {
+          // Stay on modal for receipt printing
+        }}
       />
     </div>
   );
 }
+```
+
+**Update Router in `src/main.tsx`:**
+
+```typescript
+import PaymentEntryPage from './pages/admin/PaymentEntry';
+
+// Add to routes
+<Route path="/admin/clientes/:id/pago" element={<PaymentEntryPage />} />
 ```
 
 **Test:**
@@ -650,11 +934,11 @@ export default function CustomerProfilePage() {
 3. Open customer profile
 4. Click "Registrar Pago"
 5. Fill form:
-   - Monto: $25,000
+   - Monto: 25000
    - Tipo: Efectivo
    - Observaciones: "Pago en oficina"
 6. Submit
-7. Should see success toast with boletas affected
+7. Should see receipt with "Imprimir Comprobante" button
 8. Verify payment appears in "Pagos" tab
 9. Verify customer balance updated
 10. Login as that customer in another browser
@@ -663,22 +947,22 @@ export default function CustomerProfilePage() {
 **Acceptance Criteria:**
 - [ ] Modal opens and closes correctly
 - [ ] Form validates (monto > 0, tipo required)
-- [ ] Successful submission shows toast with details
-- [ ] Customer balance refreshes automatically (via query invalidation)
-- [ ] Payment list refreshes automatically
-- [ ] Boletas list updates if any marked as paid
+- [ ] Warning shows if payment exceeds balance (overpayment)
+- [ ] Transaction number field only shows for "transferencia"
+- [ ] Loading state during submission
+- [ ] Success shows receipt view
+- [ ] Receipt printable via browser print
+- [ ] Receipt includes all payment details
+- [ ] Customer balance refreshes automatically
 - [ ] New payment visible in database
 - [ ] New payment visible in customer portal
-- [ ] Número de Transacción field only shows for "Transferencia"
-- [ ] Loading state shows during submission
-- [ ] Error messages display for failed submissions
+- [ ] Double-submit prevented (button disabled during processing)
 
 ---
 
-## Integration Testing (Day 4-5)
+## Integration Testing
 
-### Task 6.3: Payment FIFO Logic Testing
-**Time:** 1 day
+### Task 6.4: Payment FIFO Logic Testing
 
 **Create Test Scenarios:**
 
@@ -696,9 +980,9 @@ export default function CustomerProfilePage() {
    - Customer has 3 boletas (oldest to newest): $10k, $20k, $30k
    - Admin registers payment: $35,000
    - Expected:
-     - Boleta 1 (Jan): Paid fully ($10k)
-     - Boleta 2 (Feb): Paid fully ($20k)
-     - Boleta 3 (Mar): Partial ($5k note added)
+     - Boleta 1 (oldest): Paid fully ($10k) → estado = 'pagada'
+     - Boleta 2: Paid fully ($20k) → estado = 'pagada'
+     - Boleta 3: Partial ($5k note added) → estado = 'pendiente'
      - Saldo remaining: $25,000
 
 4. **Scenario: Overpayment (Saldo a Favor)**
@@ -706,17 +990,17 @@ export default function CustomerProfilePage() {
    - Admin registers payment: $50,000
    - Expected: Boleta paid, observaciones note: "Saldo a favor: $40,000"
 
-5. **Scenario: Concurrent Payments**
+5. **Scenario: Concurrent Payments (Race Condition Test)**
    - Customer has 2 boletas: $10k, $20k
    - Admin A registers: $15,000
    - Admin B registers: $10,000 (at same time)
-   - Expected: Both succeed, correct FIFO application
+   - Expected: Both succeed due to row locking, correct FIFO application
 
 **SQL Verification Queries:**
 
 ```sql
 -- Check payment was created
-SELECT * FROM transaccion_pago
+SELECT * FROM transacciones_pago
 WHERE cliente_id = 123
 ORDER BY fecha_pago DESC
 LIMIT 1;
@@ -729,7 +1013,7 @@ SELECT
   estado,
   fecha_pago,
   notas
-FROM boleta
+FROM boletas
 WHERE cliente_id = 123
 ORDER BY fecha_emision ASC;
 
@@ -739,8 +1023,14 @@ SELECT
   nombre_completo,
   saldo_actual,
   estado_cuenta
-FROM cliente
+FROM clientes
 WHERE id = 123;
+
+-- Verify audit trail
+SELECT * FROM logs_auditoria
+WHERE accion = 'REGISTRO_PAGO'
+ORDER BY creado_en DESC
+LIMIT 5;
 ```
 
 **Acceptance Criteria:**
@@ -749,206 +1039,7 @@ WHERE id = 123;
 - [ ] Pino logs show detailed payment application
 - [ ] No orphaned records (transaction rollback works)
 - [ ] Performance acceptable (<500ms for normal payments)
-
----
-
-### Task 6.4: Payment Receipt Printing (NEW)
-**Time:** 3 hours
-
-**Why This Matters:** Customer pays $50,000 cash → needs proof immediately. Waiting for PDF generation (Phase 2) is not an option. Browser print-to-PDF is instant and works on all devices.
-
-**Create:** `src/components/PaymentReceipt.tsx`
-
-```typescript
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
-
-interface PaymentReceiptProps {
-  pago: {
-    id: string;
-    monto: number;
-    fecha_pago: Date;
-    metodo_pago: string;
-    operador: string;
-    referencia_externa?: string;
-    observaciones?: string;
-  };
-  cliente: {
-    rut: string;
-    nombre_completo: string;
-    direccion: string;
-  };
-}
-
-export function PaymentReceipt({ pago, cliente }: PaymentReceiptProps) {
-  return (
-    <>
-      {/* Print Styles - Only visible when printing */}
-      <style>{`
-        @media print {
-          body * {
-            visibility: hidden;
-          }
-          .receipt-print, .receipt-print * {
-            visibility: visible;
-          }
-          .receipt-print {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-          }
-          .no-print {
-            display: none !important;
-          }
-        }
-      `}</style>
-
-      {/* Receipt Content */}
-      <div className="receipt-print max-w-2xl mx-auto p-8 bg-white">
-        {/* Header */}
-        <div className="text-center mb-8 pb-4 border-b-2 border-gray-300">
-          <h1 className="text-2xl font-bold mb-2">COAB - Compañía de Agua</h1>
-          <p className="text-sm text-gray-600">Comprobante de Pago</p>
-        </div>
-
-        {/* Payment Details */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <div>
-            <p className="text-sm font-semibold text-gray-600">Recibo N°:</p>
-            <p className="text-lg">#{pago.id}</p>
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-gray-600">Fecha:</p>
-            <p className="text-lg">
-              {format(new Date(pago.fecha_pago), "d 'de' MMMM 'de' yyyy", { locale: es })}
-            </p>
-          </div>
-        </div>
-
-        {/* Customer Info */}
-        <div className="mb-6 p-4 bg-gray-50 rounded">
-          <p className="text-sm font-semibold text-gray-600 mb-2">Cliente:</p>
-          <p className="font-medium">{cliente.nombre_completo}</p>
-          <p className="text-sm text-gray-600">RUT: {cliente.rut}</p>
-          <p className="text-sm text-gray-600">{cliente.direccion}</p>
-        </div>
-
-        {/* Payment Amount */}
-        <div className="mb-6 p-6 bg-primary-blue text-white rounded-lg text-center">
-          <p className="text-sm opacity-90 mb-2">Monto Pagado</p>
-          <p className="text-4xl font-bold">
-            {pago.monto.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}
-          </p>
-        </div>
-
-        {/* Payment Method */}
-        <div className="mb-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm font-semibold text-gray-600">Método de Pago:</p>
-              <p className="capitalize">{pago.metodo_pago}</p>
-            </div>
-            {pago.referencia_externa && (
-              <div>
-                <p className="text-sm font-semibold text-gray-600">N° Transacción:</p>
-                <p>{pago.referencia_externa}</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Notes */}
-        {pago.observaciones && (
-          <div className="mb-6">
-            <p className="text-sm font-semibold text-gray-600 mb-1">Observaciones:</p>
-            <p className="text-sm">{pago.observaciones}</p>
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className="mt-8 pt-4 border-t border-gray-300 text-center text-xs text-gray-500">
-          <p>Operador: {pago.operador}</p>
-          <p className="mt-2">Este documento es un comprobante de pago válido</p>
-          <p>Conserve para sus registros</p>
-        </div>
-      </div>
-
-      {/* Print Button (hidden in print view) */}
-      <div className="no-print flex justify-center mt-4">
-        <button
-          onClick={() => window.print()}
-          className="px-6 py-3 bg-primary-blue text-white rounded-lg hover:bg-blue-700 transition"
-        >
-          Imprimir Comprobante
-        </button>
-      </div>
-    </>
-  );
-}
-```
-
-**Usage in PaymentEntryModal:**
-
-After successful payment submission, show receipt:
-
-```typescript
-// In PaymentEntryModal.tsx
-const [showReceipt, setShowReceipt] = useState(false);
-const [lastPayment, setLastPayment] = useState<any>(null);
-
-const mutation = useMutation({
-  mutationFn: async (data) => {
-    const res = await apiClient.post('/admin/pagos', data);
-    return res.data;
-  },
-  onSuccess: (result) => {
-    toast.success('Pago registrado exitosamente');
-    setLastPayment(result.pago);
-    setShowReceipt(true);
-    queryClient.invalidateQueries({ queryKey: ['customer', clienteId] });
-  }
-});
-
-// In modal JSX:
-{showReceipt && lastPayment && (
-  <PaymentReceipt
-    pago={lastPayment}
-    cliente={customerData}
-  />
-)}
-```
-
-**How It Works:**
-
-1. Admin registers payment
-2. Success → Receipt component renders
-3. Admin clicks "Imprimir Comprobante"
-4. Browser print dialog opens
-5. Customer can:
-   - Print directly (thermal printer, laser printer)
-   - Save as PDF (browser's "Save as PDF" option)
-   - Email PDF to themselves
-
-**Test:**
-
-1. Register a payment
-2. Click "Imprimir Comprobante"
-3. In print preview, verify:
-   - Only receipt is visible (not admin UI)
-   - All payment details shown
-   - Professional formatting
-4. Save as PDF or print
-
-**Acceptance Criteria:**
-- [ ] Receipt component displays all payment details
-- [ ] Print button triggers browser print dialog
-- [ ] Print preview shows only receipt (admin UI hidden)
-- [ ] Receipt includes: payment ID, date, customer info, amount, method, operator
-- [ ] Works on desktop (Chrome, Firefox, Safari)
-- [ ] Works on mobile (iOS Safari, Android Chrome)
-- [ ] Customer can save as PDF via browser
-- [ ] Professional appearance (suitable for records/audits)
+- [ ] Concurrent payments handled correctly (no double-application)
 
 ---
 
@@ -969,24 +1060,26 @@ const mutation = useMutation({
 
 **Commit Message:**
 ```
-feat: manual payment entry with FIFO, audit logging, and receipt printing
+feat: manual payment entry with FIFO, transaction isolation, and audit logging
 
-Backend (Fastify + Zod v4 + Pino):
+Backend (Fastify + Zod + Prisma):
 - POST /admin/pagos endpoint with Zod validation
 - FIFO boleta payment application (oldest first)
-- Prisma database transaction for atomicity
-- Error recovery with detailed Pino logging
+- Prisma transaction with Serializable isolation
+- Row-level locking (FOR UPDATE) for concurrent safety
 - Support for full, partial, and overpayments
 - Denormalized balance updates for performance
-- Permanent audit trail in logs_auditoria table (compliance)
+- Permanent audit trail in logs_auditoria table
 - Captures: accion, usuario_email, ip_address, user_agent, datos_anteriores, datos_nuevos
 
 Frontend (Vite + React Router + TanStack Query):
 - Payment entry modal with React Hook Form + Zod
+- Printable receipt component with browser print
 - Real-time balance updates via query invalidation
 - Success/error toast notifications
 - Conditional field rendering (transaction number for transfers)
-- Loading states during submission
-- Printable payment receipt component
-- Browser print-to-PDF for instant customer receipts
+- Loading states and double-submit protection
+- Overpayment warning indicator
+
+🚀 Generated with Claude Code
 ```

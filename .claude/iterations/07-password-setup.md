@@ -1,52 +1,45 @@
-# ITERATION 7: Password Setup (WhatsApp Link + Infobip Auto-Send)
+# ITERATION 7: Password Setup (WhatsApp Link)
 
-**Goal:** Admin can auto-send setup links via WhatsApp, customers can set passwords
+**Goal:** Admin can send secure setup links to customers via WhatsApp; customers set their password using the link
 
-**Duration:** 2-3 days (includes Infobip WhatsApp integration)
+**You'll Be Able To:** Send WhatsApp setup links from admin panel, customers set passwords via mobile
 
-**You'll Be Able To:** Complete full automated onboarding flow (no manual link sharing!)
-
----
-
-## Before You Start
-
-### Prerequisites
-
-⚠️ **Infobip WhatsApp verification must be complete** (started in Iteration 1)
-
-**If Infobip verification is still pending:**
-- You can still implement the full setup link flow (Tasks 7.1-7.4)
-- Implement manual fallback first: Admin copies WhatsApp link and shares manually
-- Once Infobip is verified, add Task 7.1.5 (WhatsApp auto-send integration)
-
-**If Infobip is already verified:**
-- Proceed with all tasks including 7.1.5 (WhatsApp auto-send)
-- You'll need: `INFOBIP_API_KEY`, `INFOBIP_BASE_URL`, `INFOBIP_WHATSAPP_SENDER`
-
-**Other Prerequisites:**
-- Iterations 1-6 completed
-- 355 customers migrated with phone numbers in database
+**Prerequisites:**
+- Iteration 1 complete (`TokenConfiguracion` table defined)
+- Iterations 4-5 complete (admin can view customer profiles)
+- Infobip WhatsApp account verified (started in Iteration 1)
 
 ---
 
-## Backend Tasks (Day 1)
+## Backend Tasks
 
-### Task 7.1: Setup Token APIs
-**Time:** 3 hours
+### Task 7.1: Setup Token Generation API with Rate Limiting
+
+**SECURITY CRITICAL:** Setup tokens must be:
+- Single-use (cannot be reused after password set)
+- Time-limited (48-hour expiry)
+- Cryptographically random (256-bit)
+- Rate-limited to prevent abuse
 
 **Update:** `src/services/admin.service.ts`
 
-Add `generateSetupLink()` method:
+Add `generateSetupToken()` method:
 
 ```typescript
 // src/services/admin.service.ts
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export async function generateSetupLink(clienteId: bigint, logger: any) {
-  // Check if customer exists and doesn't already have password
+/**
+ * Generate a password setup token for a customer
+ */
+export async function generateSetupToken(
+  clienteId: bigint,
+  adminEmail: string,
+  ipAddress: string
+) {
   const cliente = await prisma.cliente.findUnique({
     where: { id: clienteId },
     select: {
@@ -62,61 +55,469 @@ export async function generateSetupLink(clienteId: bigint, logger: any) {
     throw new Error('Cliente no encontrado');
   }
 
-  if (cliente.hash_contrasena) {
-    throw new Error('Cliente ya tiene contraseña configurada');
-  }
-
-  if (!cliente.telefono) {
-    throw new Error('Cliente no tiene teléfono registrado');
-  }
-
-  // Generate secure token (32 bytes = 64 hex chars)
+  // Generate cryptographically secure token
   const token = crypto.randomBytes(32).toString('hex');
 
-  // Create token in database
-  await prisma.token_configuracion.create({
-    data: {
+  // Delete any existing unused tokens for this customer
+  await prisma.tokenConfiguracion.deleteMany({
+    where: {
       cliente_id: clienteId,
-      token,
-      tipo: 'setup',
-      expira_en: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
       usado: false
     }
   });
 
-  const setupUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/configurar/${token}`;
+  // Create new token (48-hour expiry)
+  const tokenRecord = await prisma.tokenConfiguracion.create({
+    data: {
+      cliente_id: clienteId,
+      token: token,
+      tipo: 'setup',
+      usado: false,
+      expira_en: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours
+      ip_creacion: ipAddress
+    }
+  });
 
-  logger.info('Setup link generated', {
-    clienteId: clienteId.toString(),
-    token: token.substring(0, 8) + '...', // Log only first 8 chars
-    expiry: '24h'
+  // Create setup URL
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const setupUrl = `${frontendUrl}/setup/${token}`;
+
+  // Audit log
+  await prisma.logAuditoria.create({
+    data: {
+      accion: 'GENERAR_TOKEN_SETUP',
+      entidad: 'token_configuracion',
+      entidad_id: tokenRecord.id,
+      usuario_tipo: 'admin',
+      usuario_email: adminEmail,
+      datos_nuevos: {
+        clienteId: clienteId.toString(),
+        clienteRut: cliente.rut,
+        tokenExpiry: tokenRecord.expira_en.toISOString()
+      },
+      ip_address: ipAddress
+    }
   });
 
   return {
     token,
     setupUrl,
-    telefono: cliente.telefono,
-    nombreCliente: cliente.nombre_completo
+    cliente: {
+      id: cliente.id.toString(),
+      rut: cliente.rut,
+      nombre: cliente.nombre_completo,
+      telefono: cliente.telefono
+    },
+    expiresAt: tokenRecord.expira_en
   };
 }
 ```
 
-**Update:** `src/services/auth.service.ts`
+**Update:** `src/routes/admin.routes.ts`
 
-Add `configurarPassword()` method (or update if exists from earlier iteration):
+Add setup token endpoint with rate limiting:
 
 ```typescript
-// src/services/auth.service.ts
-import { hash } from '@node-rs/argon2';
+// Add to src/routes/admin.routes.ts
+
+// POST /admin/clientes/:id/generar-setup - Generate setup token
+fastify.post('/clientes/:id/generar-setup', {
+  config: {
+    rateLimit: {
+      max: 3,
+      timeWindow: '1 hour',
+      keyGenerator: (req) => `setup-${(req.params as any).id}`
+    }
+  }
+}, async (request, reply) => {
+  try {
+    const { id } = request.params as { id: string };
+
+    const result = await adminService.generateSetupToken(
+      BigInt(id),
+      request.user!.email!,
+      request.ip
+    );
+
+    return result;
+  } catch (error: any) {
+    if (error.message === 'Cliente no encontrado') {
+      return reply.code(404).send({
+        error: { code: 'NOT_FOUND', message: error.message }
+      });
+    }
+    throw error;
+  }
+});
+```
+
+**Test:**
+```bash
+curl -X POST http://localhost:3000/api/v1/admin/clientes/123/generar-setup \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Should return:
+# {
+#   "token": "abc123...",
+#   "setupUrl": "http://localhost:5173/setup/abc123...",
+#   "cliente": {...},
+#   "expiresAt": "2025-..."
+# }
+
+# Test rate limit (4th request within 1 hour should fail)
+curl -X POST http://localhost:3000/api/v1/admin/clientes/123/generar-setup \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+# Expected: 429 Too Many Requests
+```
+
+**Acceptance Criteria:**
+- [ ] Generates cryptographically secure 256-bit token
+- [ ] Token expires in 48 hours
+- [ ] Old unused tokens deleted when generating new one
+- [ ] Returns setup URL with token
+- [ ] Audit log created
+- [ ] Rate limited: 3 requests per customer per hour
+- [ ] 429 returned when rate limit exceeded
+
+---
+
+### Task 7.2: WhatsApp Sending via Infobip
+
+**Prerequisites:** Infobip account verified (started in Iteration 1)
+
+**Create:** `src/services/infobip.service.ts`
+
+```typescript
+// src/services/infobip.service.ts
+import { parsePhoneNumber, isValidPhoneNumber, CountryCode } from 'libphonenumber-js';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export async function configurarPassword(token: string, password: string, logger: any) {
+const INFOBIP_API_KEY = process.env.INFOBIP_API_KEY;
+const INFOBIP_BASE_URL = process.env.INFOBIP_BASE_URL || 'https://api.infobip.com';
+const INFOBIP_WHATSAPP_SENDER = process.env.INFOBIP_WHATSAPP_SENDER;
+
+interface WhatsAppResult {
+  success: boolean;
+  messageId?: string;
+  error?: string;
+}
+
+/**
+ * Format Chilean phone number to international format
+ * Handles formats like: +56912345678, 912345678, 56912345678
+ */
+export function formatChileanPhone(phone: string): string | null {
+  try {
+    // Clean the input
+    const cleaned = phone.replace(/\D/g, '');
+
+    // Try parsing with Chile as default country
+    if (isValidPhoneNumber(phone, 'CL' as CountryCode)) {
+      const parsed = parsePhoneNumber(phone, 'CL' as CountryCode);
+      return parsed.format('E.164'); // Returns +56912345678
+    }
+
+    // Try with explicit +56 if not present
+    if (!cleaned.startsWith('56') && cleaned.length === 9) {
+      const withPrefix = `+56${cleaned}`;
+      if (isValidPhoneNumber(withPrefix)) {
+        const parsed = parsePhoneNumber(withPrefix);
+        return parsed.format('E.164');
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Send WhatsApp message via Infobip
+ */
+export async function sendWhatsAppMessage(
+  phone: string,
+  message: string
+): Promise<WhatsAppResult> {
+  if (!INFOBIP_API_KEY || !INFOBIP_WHATSAPP_SENDER) {
+    console.warn('Infobip not configured - message not sent');
+    return {
+      success: false,
+      error: 'WhatsApp no configurado'
+    };
+  }
+
+  const formattedPhone = formatChileanPhone(phone);
+  if (!formattedPhone) {
+    return {
+      success: false,
+      error: `Número de teléfono inválido: ${phone}`
+    };
+  }
+
+  try {
+    const response = await fetch(`${INFOBIP_BASE_URL}/whatsapp/1/message/text`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `App ${INFOBIP_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: INFOBIP_WHATSAPP_SENDER,
+        to: formattedPhone,
+        content: {
+          text: message
+        }
+      })
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.messages?.[0]) {
+      return {
+        success: true,
+        messageId: data.messages[0].messageId
+      };
+    }
+
+    return {
+      success: false,
+      error: data.requestError?.serviceException?.text || 'Error sending WhatsApp'
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Send password setup link via WhatsApp
+ */
+export async function sendSetupLinkViaWhatsApp(
+  clienteId: bigint,
+  setupUrl: string,
+  clienteNombre: string,
+  clienteTelefono: string,
+  logger: any
+): Promise<WhatsAppResult> {
+  const message = `Hola ${clienteNombre.split(' ')[0]},
+
+Bienvenido al Portal de Clientes de COAB.
+
+Para configurar tu contraseña y acceder a tu cuenta, ingresa al siguiente enlace:
+
+${setupUrl}
+
+Este enlace expira en 48 horas.
+
+Si no solicitaste este mensaje, ignóralo.
+
+- COAB Sistema de Agua`;
+
+  const result = await sendWhatsAppMessage(clienteTelefono, message);
+
+  // Log the attempt
+  logger.info('WhatsApp setup link sent', {
+    clienteId: clienteId.toString(),
+    success: result.success,
+    messageId: result.messageId,
+    error: result.error
+  });
+
+  return result;
+}
+```
+
+**Update:** `src/routes/admin.routes.ts`
+
+Add endpoint to send setup link:
+
+```typescript
+// POST /admin/clientes/:id/enviar-setup - Generate token AND send via WhatsApp
+fastify.post('/clientes/:id/enviar-setup', {
+  config: {
+    rateLimit: {
+      max: 3,
+      timeWindow: '1 hour',
+      keyGenerator: (req) => `enviar-setup-${(req.params as any).id}`
+    }
+  }
+}, async (request, reply) => {
+  try {
+    const { id } = request.params as { id: string };
+    const clienteId = BigInt(id);
+
+    // 1. Generate setup token
+    const tokenResult = await adminService.generateSetupToken(
+      clienteId,
+      request.user!.email!,
+      request.ip
+    );
+
+    // 2. Check phone number
+    if (!tokenResult.cliente.telefono) {
+      return reply.code(400).send({
+        error: {
+          code: 'NO_PHONE',
+          message: 'Cliente no tiene teléfono registrado',
+          setupUrl: tokenResult.setupUrl // Still return URL for manual sharing
+        }
+      });
+    }
+
+    // 3. Send via WhatsApp
+    const whatsappResult = await infobipService.sendSetupLinkViaWhatsApp(
+      clienteId,
+      tokenResult.setupUrl,
+      tokenResult.cliente.nombre,
+      tokenResult.cliente.telefono,
+      fastify.log
+    );
+
+    return {
+      ...tokenResult,
+      whatsapp: whatsappResult
+    };
+  } catch (error: any) {
+    if (error.message === 'Cliente no encontrado') {
+      return reply.code(404).send({
+        error: { code: 'NOT_FOUND', message: error.message }
+      });
+    }
+    throw error;
+  }
+});
+```
+
+**Acceptance Criteria:**
+- [ ] Generates setup token and sends via WhatsApp
+- [ ] Uses `libphonenumber-js` for phone validation
+- [ ] Handles various Chilean phone formats
+- [ ] Returns setup URL even if WhatsApp fails (for manual sharing)
+- [ ] Rate limited: 3 requests per customer per hour
+- [ ] Logs WhatsApp send attempts with success/error
+
+---
+
+### Task 7.3: Password Setup Endpoint
+
+**Create:** `src/schemas/setup.schema.ts`
+
+```typescript
+// src/schemas/setup.schema.ts
+import { z } from 'zod';
+
+// Password requirements: 8+ chars, 1 uppercase, 1 lowercase, 1 number
+export const passwordSchema = z
+  .string()
+  .min(8, 'Contraseña debe tener al menos 8 caracteres')
+  .regex(/[A-Z]/, 'Contraseña debe incluir al menos una mayúscula')
+  .regex(/[a-z]/, 'Contraseña debe incluir al menos una minúscula')
+  .regex(/[0-9]/, 'Contraseña debe incluir al menos un número');
+
+export const setupPasswordSchema = z.object({
+  token: z.string().min(1, 'Token requerido'),
+  password: passwordSchema,
+  confirmPassword: z.string()
+}).refine((data) => data.password === data.confirmPassword, {
+  message: 'Las contraseñas no coinciden',
+  path: ['confirmPassword']
+});
+
+export type SetupPasswordInput = z.infer<typeof setupPasswordSchema>;
+```
+
+**Update:** `src/services/auth.service.ts`
+
+Add `setupPassword()` method:
+
+```typescript
+// Add to src/services/auth.service.ts
+import { hash } from '@node-rs/argon2';
+
+/**
+ * Setup customer password using setup token
+ */
+export async function setupPassword(
+  token: string,
+  password: string,
+  ipAddress: string
+) {
   // Find valid token
-  const setupToken = await prisma.token_configuracion.findFirst({
+  const tokenRecord = await prisma.tokenConfiguracion.findFirst({
     where: {
-      token,
+      token: token,
+      tipo: 'setup',
+      usado: false,
+      expira_en: { gt: new Date() }
+    },
+    include: {
+      cliente: true
+    }
+  });
+
+  if (!tokenRecord || !tokenRecord.cliente) {
+    throw new Error('Token inválido o expirado');
+  }
+
+  // Hash password with Argon2id
+  const hashContrasena = await hash(password, {
+    memoryCost: 19456,
+    timeCost: 2,
+    parallelism: 1
+  });
+
+  // Update customer with password and mark token as used
+  await prisma.$transaction([
+    prisma.cliente.update({
+      where: { id: tokenRecord.cliente_id },
+      data: {
+        hash_contrasena: hashContrasena,
+        primer_login: false
+      }
+    }),
+    prisma.tokenConfiguracion.update({
+      where: { id: tokenRecord.id },
+      data: {
+        usado: true,
+        usado_en: new Date(),
+        ip_uso: ipAddress
+      }
+    })
+  ]);
+
+  // Audit log
+  await prisma.logAuditoria.create({
+    data: {
+      accion: 'CONFIGURAR_CONTRASENA',
+      entidad: 'cliente',
+      entidad_id: tokenRecord.cliente_id,
+      usuario_tipo: 'cliente',
+      datos_nuevos: {
+        setup_completado: true
+      },
+      ip_address: ipAddress
+    }
+  });
+
+  return {
+    success: true,
+    message: 'Contraseña configurada exitosamente',
+    rut: tokenRecord.cliente.rut
+  };
+}
+
+/**
+ * Validate setup token (for showing setup form)
+ */
+export async function validateSetupToken(token: string) {
+  const tokenRecord = await prisma.tokenConfiguracion.findFirst({
+    where: {
+      token: token,
       tipo: 'setup',
       usado: false,
       expira_en: { gt: new Date() }
@@ -124,617 +525,207 @@ export async function configurarPassword(token: string, password: string, logger
     include: {
       cliente: {
         select: {
-          id: true,
           rut: true,
-          nombre_completo: true,
-          hash_contrasena: true
+          nombre_completo: true
         }
       }
     }
   });
 
-  if (!setupToken) {
-    throw new Error('Token inválido o expirado');
+  if (!tokenRecord || !tokenRecord.cliente) {
+    return { valid: false };
   }
-
-  if (setupToken.cliente.hash_contrasena) {
-    throw new Error('Contraseña ya configurada');
-  }
-
-  // Hash password with Argon2id
-  const hashContrasena = await hash(password, {
-    memoryCost: 19456, // 19 MiB
-    timeCost: 2,
-    parallelism: 1
-  });
-
-  // Update customer password
-  await prisma.cliente.update({
-    where: { id: setupToken.cliente_id },
-    data: {
-      hash_contrasena: hashContrasena,
-      primer_login: false,
-      cuenta_bloqueada: false,
-      intentos_fallidos: 0
-    }
-  });
-
-  // Mark token as used
-  await prisma.token_configuracion.update({
-    where: { id: setupToken.id },
-    data: {
-      usado: true,
-      usado_en: new Date()
-    }
-  });
-
-  logger.info('Password configured successfully', {
-    clienteId: setupToken.cliente_id.toString(),
-    token: token.substring(0, 8) + '...'
-  });
 
   return {
-    success: true,
+    valid: true,
     cliente: {
-      rut: setupToken.cliente.rut,
-      nombre: setupToken.cliente.nombre_completo
+      rut: tokenRecord.cliente.rut,
+      nombre: tokenRecord.cliente.nombre_completo
     }
   };
 }
-```
-
-**Update:** `src/routes/admin.routes.ts`
-
-Add setup link generation endpoint:
-
-```typescript
-// src/routes/admin.routes.ts
-import { FastifyPluginAsync } from 'fastify';
-import * as adminService from '../services/admin.service.js';
-import { requireAdmin } from '../middleware/auth.middleware.js';
-
-const adminRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.addHook('onRequest', requireAdmin);
-
-  // POST /admin/clientes/:id/enviar-setup
-  fastify.post('/clientes/:id/enviar-setup', async (request, reply) => {
-    try {
-      const { id } = request.params as { id: string };
-      const result = await adminService.generateSetupLink(BigInt(id), fastify.log);
-      return result;
-    } catch (error: any) {
-      if (error.message === 'Cliente no encontrado') {
-        return reply.code(404).send({
-          error: { code: 'NOT_FOUND', message: error.message }
-        });
-      }
-      if (error.message.includes('ya tiene contraseña') || error.message.includes('no tiene teléfono')) {
-        return reply.code(400).send({
-          error: { code: 'INVALID_REQUEST', message: error.message }
-        });
-      }
-      throw error;
-    }
-  });
-};
-
-export default adminRoutes;
 ```
 
 **Update:** `src/routes/auth.routes.ts`
 
-Add password configuration endpoint:
+Add setup endpoints (public - no auth required):
 
 ```typescript
-// src/routes/auth.routes.ts
-import { FastifyPluginAsync } from 'fastify';
-import { z } from 'zod';
-import * as authService from '../services/auth.service.js';
+// Add to src/routes/auth.routes.ts
 
-const configurarSchema = z.object({
-  password: z.string()
-    .min(8, 'Contraseña debe tener al menos 8 caracteres')
-    .regex(/[0-9]/, 'Contraseña debe contener al menos un número'),
-  passwordConfirm: z.string()
-}).refine((data) => data.password === data.passwordConfirm, {
-  message: 'Las contraseñas no coinciden',
-  path: ['passwordConfirm']
-});
+// GET /auth/setup/:token - Validate token (show form or error)
+fastify.get('/setup/:token', async (request, reply) => {
+  try {
+    const { token } = request.params as { token: string };
+    const result = await authService.validateSetupToken(token);
 
-const authRoutes: FastifyPluginAsync = async (fastify) => {
-  // POST /auth/configurar/:token
-  fastify.post('/configurar/:token', async (request, reply) => {
-    try {
-      const { token } = request.params as { token: string };
-      const body = configurarSchema.parse(request.body);
-
-      const result = await authService.configurarPassword(
-        token,
-        body.password,
-        fastify.log
-      );
-
-      return result;
-    } catch (error: any) {
-      if (error.name === 'ZodError') {
-        return reply.code(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: error.errors[0].message,
-            details: error.errors
-          }
-        });
-      }
-      if (error.message.includes('inválido') || error.message.includes('expirado') || error.message.includes('ya configurada')) {
-        return reply.code(400).send({
-          error: { code: 'INVALID_TOKEN', message: error.message }
-        });
-      }
-      throw error;
+    if (!result.valid) {
+      return reply.code(404).send({
+        error: { code: 'INVALID_TOKEN', message: 'Enlace inválido o expirado' }
+      });
     }
-  });
-};
 
-export default authRoutes;
-```
-
----
-
-### Task 7.1.5: Infobip WhatsApp Auto-Send (NEW - Moved from Phase 2)
-**Time:** 1 day (8 hours)
-
-**Why This Change:** Professional review identified that manual link sharing for 355 customers = 30 hours of work + ongoing support chaos. Infobip WhatsApp API costs ~$1.77 for 355 messages but saves weeks of operational burden.
-
-**Cost Analysis:**
-- Infobip WhatsApp: ~$0.005/message
-- 355 customers × $0.005 = **$1.77 total**
-- Time saved: ~30 hours of manual work
-- **ROI: Massive** (save $300+ in labor for $1.77)
-
-**Setup Infobip Account:**
-
-1. Create account at https://www.infobip.com
-2. Go to Channels → WhatsApp → Get Started
-3. Create WhatsApp sender (requires business verification - use company details)
-4. **Important:** Verification can take 1-3 days. Start this ASAP!
-5. Get API key: Developer Tools → API Keys → Create New Key
-6. Add to `.env`:
-   ```bash
-   INFOBIP_API_KEY=<your-key>
-   INFOBIP_BASE_URL=https://api.infobip.com
-   INFOBIP_WHATSAPP_SENDER=<your-verified-number>
-   ```
-
-**Install Infobip SDK:**
-
-```bash
-cd coab-backend
-npm install @infobip-api/sdk
-```
-
-**Create WhatsApp Service:**
-
-```typescript
-// src/services/whatsapp.service.ts
-import { InfobipClient, AuthType } from '@infobip-api/sdk';
-
-const client = new InfobipClient({
-  baseUrl: process.env.INFOBIP_BASE_URL!,
-  apiKey: process.env.INFOBIP_API_KEY!,
-  authType: AuthType.ApiKey
+    return result;
+  } catch (error: any) {
+    return reply.code(500).send({
+      error: { code: 'SERVER_ERROR', message: 'Error al validar enlace' }
+    });
+  }
 });
 
-export async function sendSetupLink(
-  phoneNumber: string,
-  customerName: string,
-  setupUrl: string,
-  logger: any
-) {
-  // Format phone number for Chilean format (+56 9 XXXX XXXX)
-  const formattedPhone = phoneNumber.startsWith('+56')
-    ? phoneNumber
-    : `+56${phoneNumber.replace(/^0/, '')}`;
-
-  const message = `Hola ${customerName}! 👋
-
-Bienvenido a COAB - Portal de Clientes.
-
-Para acceder a tu cuenta por primera vez, configura tu contraseña aquí:
-${setupUrl}
-
-Este link expira en 24 horas.
-
-Si tienes problemas, contacta a nuestro soporte.
-
-🔒 Link seguro y confidencial`;
-
+// POST /auth/setup - Submit password
+fastify.post('/setup', async (request, reply) => {
   try {
-    const response = await client.channels.whatsapp.send({
-      type: 'text',
-      from: process.env.INFOBIP_WHATSAPP_SENDER!,
-      to: formattedPhone,
-      content: {
-        text: message
-      }
-    });
+    const body = setupPasswordSchema.parse(request.body);
 
-    logger.info('WhatsApp setup link sent via Infobip', {
-      to: formattedPhone,
-      messageId: response.messages?.[0]?.messageId,
-      status: response.messages?.[0]?.status?.groupName
-    });
-
-    return {
-      success: true,
-      messageId: response.messages?.[0]?.messageId,
-      status: response.messages?.[0]?.status?.groupName
-    };
-  } catch (error: any) {
-    logger.error('Failed to send WhatsApp via Infobip', {
-      to: formattedPhone,
-      error: error.message,
-      details: error.response?.data
-    });
-
-    throw new Error('No se pudo enviar mensaje de WhatsApp. Intente más tarde.');
-  }
-}
-```
-
-**Update generateSetupLink() to Auto-Send:**
-
-```typescript
-// src/services/admin.service.ts
-import { sendSetupLink } from './whatsapp.service.js';
-
-export async function generateSetupLink(clienteId: bigint, logger: any) {
-  // ... existing code to generate token ...
-
-  const setupUrl = `${process.env.FRONTEND_URL}/configurar/${token}`;
-
-  // **AUTO-SEND VIA INFOBIP** (NEW)
-  try {
-    await sendSetupLink(
-      cliente.telefono!,
-      cliente.nombre_completo,
-      setupUrl,
-      logger
+    const result = await authService.setupPassword(
+      body.token,
+      body.password,
+      request.ip
     );
 
-    logger.info('Setup link generated and sent via WhatsApp', {
-      clienteId: clienteId.toString(),
-      telefono: cliente.telefono
-    });
-
-    return {
-      token,
-      setupUrl,
-      telefono: cliente.telefono,
-      nombreCliente: cliente.nombre_completo,
-      whatsappSent: true, // NEW
-      message: 'Link enviado por WhatsApp exitosamente'
-    };
-  } catch (whatsappError: any) {
-    // WhatsApp failed, but still return link for manual sharing
-    logger.warn('WhatsApp send failed, returning link for manual sharing', {
-      error: whatsappError.message
-    });
-
-    return {
-      token,
-      setupUrl,
-      telefono: cliente.telefono,
-      nombreCliente: cliente.nombre_completo,
-      whatsappSent: false,
-      message: 'Error al enviar WhatsApp. Copie el link y envíelo manualmente.',
-      error: whatsappError.message
-    };
-  }
-}
-```
-
-**Update Admin UI:**
-
-```typescript
-// src/components/admin/CustomerProfile.tsx
-const sendSetupLink = useMutation({
-  mutationFn: async () => {
-    const res = await apiClient.post(`/admin/clientes/${customerId}/enviar-setup`);
-    return res.data;
-  },
-  onSuccess: (result) => {
-    if (result.whatsappSent) {
-      toast.success(`Link enviado por WhatsApp a ${result.telefono}`);
-    } else {
-      toast.warning(result.message);
-      // Show copy button as fallback
-      setShowManualLink(true);
-      setSetupUrl(result.setupUrl);
+    return result;
+  } catch (error: any) {
+    if (error.name === 'ZodError') {
+      return reply.code(400).send({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: error.errors[0].message,
+          details: error.errors
+        }
+      });
     }
+
+    if (error.message === 'Token inválido o expirado') {
+      return reply.code(400).send({
+        error: { code: 'INVALID_TOKEN', message: error.message }
+      });
+    }
+
+    return reply.code(500).send({
+      error: { code: 'SETUP_ERROR', message: 'Error al configurar contraseña' }
+    });
   }
 });
 ```
 
-**Test Infobip Integration:**
-
-```bash
-# Test WhatsApp send
-curl -X POST http://localhost:3000/api/v1/admin/clientes/123/enviar-setup \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
-
-# Expected response:
-# {
-#   "token": "abc123...",
-#   "setupUrl": "https://app.pages.dev/configurar/abc123...",
-#   "telefono": "+56912345678",
-#   "nombreCliente": "Juan Pérez",
-#   "whatsappSent": true,
-#   "message": "Link enviado por WhatsApp exitosamente"
-# }
-
-# Check customer's WhatsApp for message (test with your own phone first!)
-```
-
-**Bulk Send for All 355 Customers:**
-
-Create admin script for initial rollout:
-
-```typescript
-// scripts/send-all-setup-links.ts
-import { PrismaClient } from '@prisma/client';
-import { generateSetupLink } from '../src/services/admin.service.js';
-import pino from 'pino';
-
-const prisma = new PrismaClient();
-const logger = pino();
-
-async function sendAllSetupLinks() {
-  const customersNeedingSetup = await prisma.cliente.findMany({
-    where: {
-      hash_contrasena: null,
-      telefono: { not: null }
-    }
-  });
-
-  console.log(`Found ${customersNeedingSetup.length} customers needing setup links`);
-
-  let sent = 0;
-  let failed = 0;
-
-  for (const customer of customersNeedingSetup) {
-    try {
-      const result = await generateSetupLink(customer.id, logger);
-      if (result.whatsappSent) {
-        sent++;
-        console.log(`✅ Sent to ${customer.nombre_completo} (${customer.telefono})`);
-      } else {
-        failed++;
-        console.log(`❌ Failed for ${customer.nombre_completo}: ${result.error}`);
-      }
-
-      // Rate limit: wait 1 second between sends (avoid Infobip throttling)
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    } catch (error: any) {
-      failed++;
-      console.error(`❌ Error for ${customer.nombre_completo}:`, error.message);
-    }
-  }
-
-  console.log(`\n✅ Sent: ${sent}`);
-  console.log(`❌ Failed: ${failed}`);
-  console.log(`Total cost: ~$${(sent * 0.005).toFixed(2)}`);
-}
-
-sendAllSetupLinks().catch(console.error);
-```
-
-**Run bulk send (after Infobip verification):**
-
-```bash
-cd coab-backend
-npx ts-node scripts/send-all-setup-links.ts
-```
-
 **Acceptance Criteria:**
-- [ ] Infobip account created and WhatsApp sender verified
-- [ ] @infobip-api/sdk installed
-- [ ] WhatsApp service created with proper error handling
-- [ ] generateSetupLink() auto-sends via WhatsApp
-- [ ] Fallback to manual link if WhatsApp fails
-- [ ] Chilean phone number formatting works (+56 9 XXXX XXXX)
-- [ ] Message text is professional and clear
-- [ ] Bulk send script tested with 5-10 customers first
-- [ ] Cost tracking: Sent count × $0.005 matches Infobip invoice
-- [ ] Admin UI shows success/failure status
-- [ ] Manual copy button available as fallback
-
-**Cost Tracking:**
-- Log every WhatsApp send to audit trail
-- Query for monthly cost: `SELECT COUNT(*) * 0.005 AS cost FROM log_auditoria WHERE accion = 'WHATSAPP_ENVIADO' AND created_at >= '2025-10-01'`
+- [ ] GET validates token and returns customer name
+- [ ] POST creates Argon2id password hash
+- [ ] Token marked as used after setup
+- [ ] Customer `primer_login` set to false
+- [ ] Zod validates password complexity
+- [ ] IP address recorded on token use
+- [ ] Audit log created
 
 ---
 
-**Test:**
-```bash
-# Generate token
-curl -X POST http://localhost:3000/api/v1/admin/clientes/123/enviar-setup \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+## Frontend Tasks
 
-# Returns:
-# {
-#   "token": "abc123...",
-#   "setupUrl": "http://localhost:5173/configurar/abc123...",
-#   "telefono": "+56912345678",
-#   "nombreCliente": "Juan Pérez"
-# }
-
-# Test setup
-curl -X POST http://localhost:3000/api/v1/auth/configurar/abc123... \
-  -H "Content-Type: application/json" \
-  -d '{
-    "password": "NewPass123",
-    "passwordConfirm": "NewPass123"
-  }'
-
-# Returns:
-# {
-#   "success": true,
-#   "cliente": {
-#     "rut": "12345678-9",
-#     "nombre": "Juan Pérez"
-#   }
-# }
-```
-
-**Acceptance Criteria:**
-- [ ] Token generated and stored in `token_configuracion` table
-- [ ] Token expires in 24 hours
-- [ ] Cannot generate token if customer already has password
-- [ ] Cannot generate token if customer has no phone
-- [ ] Setup endpoint validates token (not expired, not used)
-- [ ] Password validation enforces min 8 chars + 1 number
-- [ ] Password hashed with Argon2id (not bcrypt)
-- [ ] Password update works, marks token as used
-- [ ] Pino logs show setup link generation and usage
-
----
-
-## Frontend Tasks (Day 2)
-
-### Task 7.2: Admin Setup Link UI
-**Time:** 2 hours
+### Task 7.4: Send Setup Link from Admin Profile
 
 **Update:** `src/pages/admin/CustomerProfile.tsx`
 
-Add "Enviar Link Configuración" button and modal:
+Add "Send Setup Link" button functionality:
 
 ```typescript
 // Add to CustomerProfile.tsx
-import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
-import apiClient from '@/lib/api';
 
-export default function CustomerProfilePage() {
-  const { id } = useParams<{ id: string }>();
-  const [setupLinkModalOpen, setSetupLinkModalOpen] = useState(false);
-  const [setupUrl, setSetupUrl] = useState('');
-  const { toast } = useToast();
+import { Send } from 'lucide-react';
 
-  const generateSetupLinkMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiClient.post(`/admin/clientes/${id}/enviar-setup`);
-      return response.data;
-    },
-    onSuccess: (data) => {
-      setSetupUrl(data.setupUrl);
-      setSetupLinkModalOpen(true);
+// Add mutation for sending setup link
+const sendSetupMutation = useMutation({
+  mutationFn: async () => {
+    const res = await adminApiClient.post(`/admin/clientes/${id}/enviar-setup`);
+    return res.data;
+  },
+  onSuccess: (data) => {
+    if (data.whatsapp?.success) {
       toast({
-        title: 'Link generado',
-        description: `Para ${data.nombreCliente} - Tel: ${data.telefono}`
+        title: 'Enlace enviado',
+        description: 'Mensaje de WhatsApp enviado exitosamente'
       });
-    },
-    onError: (error: any) => {
-      const errorMessage = error.response?.data?.error?.message || 'Error al generar link';
+    } else {
+      // WhatsApp failed but URL generated
+      toast({
+        title: 'Enlace generado',
+        description: data.whatsapp?.error || 'Copie el enlace para compartir manualmente',
+        action: (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              navigator.clipboard.writeText(data.setupUrl);
+              toast({ title: 'Enlace copiado' });
+            }}
+          >
+            Copiar
+          </Button>
+        )
+      });
+    }
+  },
+  onError: (error: any) => {
+    const errorData = error.response?.data?.error;
+
+    if (errorData?.code === 'NO_PHONE') {
+      // Customer has no phone - show URL for manual sharing
+      toast({
+        title: 'Sin teléfono registrado',
+        description: 'Copie el enlace para compartir manualmente',
+        action: (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              navigator.clipboard.writeText(errorData.setupUrl);
+              toast({ title: 'Enlace copiado' });
+            }}
+          >
+            Copiar
+          </Button>
+        )
+      });
+    } else {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: errorMessage
+        description: errorData?.message || 'Error al enviar enlace'
       });
     }
-  });
+  }
+});
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(setupUrl);
-    toast({
-      title: 'Copiado',
-      description: 'Link copiado al portapapeles'
-    });
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      {/* ... existing code ... */}
-
-      <div className="mt-4 flex gap-2">
-        {!customer?.tiene_contrasena && (
-          <Button
-            variant="outline"
-            onClick={() => generateSetupLinkMutation.mutate()}
-            disabled={generateSetupLinkMutation.isPending}
-          >
-            {generateSetupLinkMutation.isPending ? 'Generando...' : 'Enviar Link Configuración'}
-          </Button>
-        )}
-        {/* ... other buttons ... */}
-      </div>
-
-      {/* Setup Link Modal */}
-      <Dialog open={setupLinkModalOpen} onOpenChange={setSetupLinkModalOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Link de Configuración</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm text-gray-600 mb-2">
-                Comparte este link con el cliente por WhatsApp. El link expira en 24 horas.
-              </p>
-              <div className="p-3 bg-gray-100 rounded border border-gray-300 font-mono text-sm break-all">
-                {setupUrl}
-              </div>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setSetupLinkModalOpen(false)}>
-                Cerrar
-              </Button>
-              <Button onClick={copyToClipboard}>
-                Copiar Link
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
+// In the action buttons section (inside CardContent):
+{!customer.tiene_contrasena && (
+  <Button
+    variant="outline"
+    onClick={() => sendSetupMutation.mutate()}
+    disabled={sendSetupMutation.isPending}
+  >
+    <Send className="h-4 w-4 mr-2" />
+    {sendSetupMutation.isPending ? 'Enviando...' : 'Enviar Link Configuración'}
+  </Button>
+)}
 ```
 
-**Test:**
-1. Login as admin
-2. Search for customer without password
-3. Click "Enviar Link Configuración"
-4. Should see modal with generated link
-5. Click "Copiar Link"
-6. Should see "Copiado" toast
-7. Paste link in browser - should be valid URL
-
 **Acceptance Criteria:**
-- [ ] Button only shows for customers without password
-- [ ] Button disabled during generation
-- [ ] Modal displays generated URL
-- [ ] Copy button works (copies to clipboard)
-- [ ] Toast shows customer name and phone
-- [ ] Error handling for already-configured customers
-- [ ] Error handling for customers without phone
+- [ ] Button only shows if customer has no password
+- [ ] Loading state during send
+- [ ] Success toast with copy button if WhatsApp fails
+- [ ] Success toast if WhatsApp succeeds
+- [ ] Error handling for missing phone number
 
 ---
 
-### Task 7.3: Password Setup Page
-**Time:** 3 hours
+### Task 7.5: Password Setup Page (Public)
 
-**Create:** `src/pages/PasswordSetup.tsx`
+**Create:** `src/pages/Setup.tsx`
 
 ```typescript
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -744,100 +735,120 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import apiClient from '@/lib/api';
+import { formatearRUT } from '@coab/utils';
+import { CheckCircle2, XCircle, Eye, EyeOff } from 'lucide-react';
 
-const passwordSetupSchema = z.object({
-  password: z.string()
-    .min(8, 'Contraseña debe tener al menos 8 caracteres')
-    .regex(/[0-9]/, 'Contraseña debe contener al menos un número'),
-  passwordConfirm: z.string()
-}).refine((data) => data.password === data.passwordConfirm, {
+// Password requirements
+const passwordSchema = z
+  .string()
+  .min(8, 'Mínimo 8 caracteres')
+  .regex(/[A-Z]/, 'Incluir al menos una mayúscula')
+  .regex(/[a-z]/, 'Incluir al menos una minúscula')
+  .regex(/[0-9]/, 'Incluir al menos un número');
+
+const setupSchema = z.object({
+  password: passwordSchema,
+  confirmPassword: z.string()
+}).refine((data) => data.password === data.confirmPassword, {
   message: 'Las contraseñas no coinciden',
-  path: ['passwordConfirm']
+  path: ['confirmPassword']
 });
 
-type PasswordSetupForm = z.infer<typeof passwordSetupSchema>;
+type SetupForm = z.infer<typeof setupSchema>;
 
-export default function PasswordSetupPage() {
+export default function SetupPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [customerName, setCustomerName] = useState('');
-  const [tokenValid, setTokenValid] = useState<boolean | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  // Validate token
+  const { data: tokenData, isLoading, error } = useQuery({
+    queryKey: ['setup-token', token],
+    queryFn: async () => {
+      const res = await apiClient.get(`/auth/setup/${token}`);
+      return res.data;
+    },
+    enabled: !!token,
+    retry: false
+  });
 
   const {
     register,
     handleSubmit,
     watch,
-    formState: { errors, isSubmitting }
-  } = useForm<PasswordSetupForm>({
-    resolver: zodResolver(passwordSetupSchema)
+    formState: { errors }
+  } = useForm<SetupForm>({
+    resolver: zodResolver(setupSchema)
   });
 
-  const password = watch('password');
+  const password = watch('password', '');
 
-  // Validate token on page load
-  useEffect(() => {
-    async function validateToken() {
-      try {
-        // We don't have a validation endpoint, so we'll just check on submit
-        // For better UX, you could add GET /auth/configurar/:token to validate
-        setTokenValid(true);
-      } catch (error) {
-        setTokenValid(false);
-      }
-    }
-    if (token) {
-      validateToken();
-    }
-  }, [token]);
+  // Password strength indicators
+  const hasMinLength = password.length >= 8;
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasLowercase = /[a-z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
 
-  const onSubmit = async (data: PasswordSetupForm) => {
-    try {
-      const response = await apiClient.post(`/auth/configurar/${token}`, {
+  // Submit mutation
+  const setupMutation = useMutation({
+    mutationFn: async (data: SetupForm) => {
+      const res = await apiClient.post('/auth/setup', {
+        token,
         password: data.password,
-        passwordConfirm: data.passwordConfirm
+        confirmPassword: data.confirmPassword
       });
-
-      const { cliente } = response.data;
-      setCustomerName(cliente.nombre);
-
+      return res.data;
+    },
+    onSuccess: (data) => {
       toast({
-        title: '¡Contraseña configurada!',
-        description: 'Ya puedes iniciar sesión con tu RUT y contraseña'
+        title: 'Contraseña configurada',
+        description: 'Ahora puedes iniciar sesión'
       });
-
       // Redirect to login with RUT pre-filled
-      setTimeout(() => {
-        navigate(`/login?rut=${encodeURIComponent(cliente.rut)}`);
-      }, 2000);
-    } catch (error: any) {
-      const errorMessage = error.response?.data?.error?.message || 'Error al configurar contraseña';
+      navigate(`/login?rut=${encodeURIComponent(data.rut)}`);
+    },
+    onError: (error: any) => {
+      const message = error.response?.data?.error?.message || 'Error al configurar contraseña';
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: errorMessage
+        description: message
       });
-
-      // If token expired or invalid, show clear message
-      if (errorMessage.includes('inválido') || errorMessage.includes('expirado')) {
-        setTokenValid(false);
-      }
     }
+  });
+
+  const onSubmit = (data: SetupForm) => {
+    setupMutation.mutate(data);
   };
 
-  if (tokenValid === false) {
+  // Loading state
+  if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-center text-red-600">Link Inválido o Expirado</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-center text-gray-600 mb-4">
-              Este link de configuración ha expirado o ya fue usado. Por favor, contacta a COAB para obtener un nuevo link.
+          <CardContent className="pt-6 text-center">
+            Validando enlace...
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Invalid or expired token
+  if (error || !tokenData?.valid) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <Card className="w-full max-w-md">
+          <CardContent className="pt-6 text-center space-y-4">
+            <XCircle className="h-16 w-16 text-red-500 mx-auto" />
+            <h2 className="text-xl font-bold text-red-600">Enlace Inválido</h2>
+            <p className="text-gray-600">
+              Este enlace ya fue usado o ha expirado. Contacta a COAB para solicitar uno nuevo.
             </p>
-            <Button className="w-full" onClick={() => navigate('/login')}>
-              Volver al Login
+            <Button onClick={() => navigate('/login')} className="mt-4">
+              Ir a Inicio de Sesión
             </Button>
           </CardContent>
         </Card>
@@ -846,56 +857,81 @@ export default function PasswordSetupPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-center text-2xl">Configura tu Contraseña</CardTitle>
-          {customerName && (
-            <p className="text-center text-gray-600 mt-2">Bienvenido, {customerName}</p>
-          )}
+          <CardTitle className="text-2xl font-bold text-center text-primary-blue">
+            Configurar Contraseña
+          </CardTitle>
+          <p className="text-center text-gray-600">Portal Clientes COAB</p>
         </CardHeader>
         <CardContent>
+          {/* Customer Info */}
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg text-center">
+            <p className="font-medium">{tokenData.cliente.nombre}</p>
+            <p className="text-sm text-gray-600 font-mono">
+              RUT: {formatearRUT(tokenData.cliente.rut)}
+            </p>
+          </div>
+
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div>
               <Label htmlFor="password">Nueva Contraseña</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Mínimo 8 caracteres, 1 número"
-                {...register('password')}
-                className={errors.password ? 'border-red-500' : ''}
-              />
-              {errors.password && (
-                <p className="text-sm text-red-500 mt-1">{errors.password.message}</p>
-              )}
-              {password && password.length > 0 && (
-                <div className="mt-2 text-sm space-y-1">
-                  <p className={password.length >= 8 ? 'text-green-600' : 'text-gray-500'}>
-                    {password.length >= 8 ? '✓' : '○'} Mínimo 8 caracteres
-                  </p>
-                  <p className={/[0-9]/.test(password) ? 'text-green-600' : 'text-gray-500'}>
-                    {/[0-9]/.test(password) ? '✓' : '○'} Al menos 1 número
-                  </p>
-                </div>
-              )}
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  {...register('password')}
+                  className={`h-12 pr-10 ${errors.password ? 'border-red-500' : ''}`}
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500"
+                >
+                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Password Requirements */}
+            <div className="space-y-1 text-sm">
+              <RequirementIndicator met={hasMinLength} text="Mínimo 8 caracteres" />
+              <RequirementIndicator met={hasUppercase} text="Una letra mayúscula" />
+              <RequirementIndicator met={hasLowercase} text="Una letra minúscula" />
+              <RequirementIndicator met={hasNumber} text="Un número" />
             </div>
 
             <div>
-              <Label htmlFor="passwordConfirm">Confirmar Contraseña</Label>
-              <Input
-                id="passwordConfirm"
-                type="password"
-                placeholder="Repite la contraseña"
-                {...register('passwordConfirm')}
-                className={errors.passwordConfirm ? 'border-red-500' : ''}
-              />
-              {errors.passwordConfirm && (
-                <p className="text-sm text-red-500 mt-1">{errors.passwordConfirm.message}</p>
+              <Label htmlFor="confirmPassword">Confirmar Contraseña</Label>
+              <div className="relative">
+                <Input
+                  id="confirmPassword"
+                  type={showConfirm ? 'text' : 'password'}
+                  {...register('confirmPassword')}
+                  className={`h-12 pr-10 ${errors.confirmPassword ? 'border-red-500' : ''}`}
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirm(!showConfirm)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500"
+                >
+                  {showConfirm ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+              {errors.confirmPassword && (
+                <p className="text-sm text-red-500 mt-1">{errors.confirmPassword.message}</p>
               )}
             </div>
 
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? 'Configurando...' : 'Configurar Contraseña'}
+            <Button
+              type="submit"
+              className="w-full h-12 text-lg bg-primary-blue hover:bg-blue-700"
+              disabled={setupMutation.isPending}
+            >
+              {setupMutation.isPending ? 'Configurando...' : 'Configurar Contraseña'}
             </Button>
           </form>
         </CardContent>
@@ -903,85 +939,94 @@ export default function PasswordSetupPage() {
     </div>
   );
 }
+
+// Requirement indicator component
+function RequirementIndicator({ met, text }: { met: boolean; text: string }) {
+  return (
+    <div className={`flex items-center gap-2 ${met ? 'text-accent-green' : 'text-gray-400'}`}>
+      {met ? (
+        <CheckCircle2 className="h-4 w-4" />
+      ) : (
+        <div className="h-4 w-4 border rounded-full" />
+      )}
+      <span>{text}</span>
+    </div>
+  );
+}
 ```
 
-**Update Router:**
-```typescript
-// src/main.tsx or App.tsx
-import { createBrowserRouter, RouterProvider } from 'react-router';
-import PasswordSetup from './pages/PasswordSetup';
+**Update Router in `src/main.tsx`:**
 
-const router = createBrowserRouter([
-  {
-    path: '/configurar/:token',
-    element: <PasswordSetup />
-  }
-]);
+```typescript
+import SetupPage from './pages/Setup';
+
+// Add to routes
+<Route path="/setup/:token" element={<SetupPage />} />
 ```
 
 **Test:**
-1. Copy setup URL from admin modal
-2. Open in new incognito window
-3. Should see "Configura tu Contraseña" page
-4. Enter password "NewPass123"
-5. Enter confirm "NewPass123"
-6. Should see real-time validation checkmarks
-7. Submit
-8. Should see success toast
-9. Should redirect to login with RUT pre-filled
-10. Login with RUT and new password
-11. Should successfully enter dashboard
+1. Admin generates setup link for customer
+2. Customer opens link in mobile browser
+3. Page shows customer name and RUT
+4. Customer enters password (8+ chars, uppercase, lowercase, number)
+5. See real-time requirement indicators
+6. Submit and redirect to login
+7. Login with RUT + new password
 
 **Acceptance Criteria:**
 - [ ] Token validation on page load
-- [ ] Expired token shows error page
-- [ ] Used token shows error page
-- [ ] Password validation shows real-time feedback (checkmarks)
-- [ ] Password mismatch shows error
-- [ ] Success shows toast and redirects to login
-- [ ] RUT pre-filled in login page URL params
-- [ ] Customer can login with new password
-- [ ] Password stored as Argon2id hash (verify in database)
+- [ ] Invalid token shows error page
+- [ ] Customer name and RUT displayed
+- [ ] Password toggle visibility buttons
+- [ ] Real-time password requirement indicators
+- [ ] Password confirmation validation
+- [ ] Success redirects to login with RUT pre-filled
+- [ ] Mobile-friendly (touch targets ≥44px)
+- [ ] Works on iOS Safari and Android Chrome
 
 ---
 
 ## Iteration 7 Complete! ✅
 
 **What You Can Test:**
-- Full onboarding flow:
-  1. Admin searches for customer without password
-  2. Admin clicks "Enviar Link Configuración"
-  3. Admin copies link
-  4. Customer opens link (simulate WhatsApp click)
-  5. Customer sees personalized setup page
-  6. Customer sets password with real-time validation
-  7. Customer redirected to login
-  8. Customer logs in successfully
-  9. Customer sees their dashboard
+- Admin generates setup link for customer without password
+- WhatsApp message sent with setup URL
+- Manual URL copy if WhatsApp fails (e.g., no phone)
+- Customer opens link on mobile → sees their info
+- Customer sets password with visual requirements
+- Expired/used links show error page
+- Customer can now login with new password
+- Rate limiting prevents abuse (3 per customer per hour)
 
-**Note:** ~~WhatsApp auto-send is Phase 2~~ **NOW IN MVP!** Infobip integration added based on professional review (saves 30 hours of manual work for $1.77).
+**Fallback if Infobip Not Ready:**
+If Infobip verification is still pending, admin can:
+1. Click "Enviar Link Configuración"
+2. Get setup URL in response
+3. Manually copy/paste URL and send via personal WhatsApp
 
 **Commit Message:**
 ```
-feat: password setup flow with Infobip WhatsApp auto-send
+feat: password setup via WhatsApp link with rate limiting
 
-Backend (Fastify + Argon2id + Infobip):
-- Setup token generation endpoint (POST /admin/clientes/:id/enviar-setup)
-- Password configuration endpoint (POST /auth/configurar/:token)
-- Token validation and expiry (24 hours)
-- Argon2id password hashing (memoryCost: 19456)
-- Pino logging for audit trail
-- **Infobip WhatsApp integration for automated link sending**
-- **Bulk send script for 355 customer onboarding**
-- **Fallback to manual link if WhatsApp fails**
-- **Cost tracking: $0.005/message**
+Backend (Fastify + Infobip + libphonenumber-js):
+- POST /admin/clientes/:id/generar-setup (generate token)
+- POST /admin/clientes/:id/enviar-setup (generate + WhatsApp)
+- GET /auth/setup/:token (validate token)
+- POST /auth/setup (set password)
+- Cryptographically secure tokens (256-bit)
+- 48-hour token expiry with single-use
+- Infobip WhatsApp API integration
+- Phone validation with libphonenumber-js
+- Rate limiting: 3 requests per customer per hour
+- Argon2id password hashing
+- Audit trail for token generation and password setup
 
 Frontend (Vite + React Router):
-- Admin setup link generation UI
-- WhatsApp send status indicators (success/failure)
-- Manual copy button as fallback
-- Customer password setup page with real-time validation
-- Token validation and error handling
-- Redirect to login with RUT pre-filled via URL params
-- Real-time password strength indicators
+- Admin "Send Setup Link" button with copy fallback
+- Password setup page with mobile-first design
+- Real-time password requirement indicators
+- Token validation and error states
+- Redirect to login with RUT pre-filled
+
+🚀 Generated with Claude Code
 ```

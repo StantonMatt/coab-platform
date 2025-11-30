@@ -182,7 +182,7 @@ datasource db {
 
 | Technology | Version | Installation |
 |------------|---------|--------------|
-| **Tailwind CSS** | ^4.0.0 | `npm install tailwindcss @tailwindcss/vite` |
+| **Tailwind CSS** | ^4.1.0 | `npm install tailwindcss @tailwindcss/vite` |
 | **shadcn/ui** | Latest | `npx shadcn@latest init` |
 
 **Why Tailwind CSS?**
@@ -237,7 +237,7 @@ datasource db {
 
 | Technology | Version | Installation |
 |------------|---------|--------------|
-| **date-fns** | ^4.0.0 | `npm install date-fns` |
+| **date-fns** | ^4.1.0 | `npm install date-fns` |
 | **date-fns/locale/es** | Included | Built-in Spanish locale |
 | **date-fns-tz** | ^3.0.0 | `npm install date-fns-tz` |
 
@@ -248,6 +248,39 @@ datasource db {
 - **Better TypeScript support** than Moment.js
 - Pair with **date-fns-tz** for Chile timezone handling (America/Santiago)
 - Backend should set `TZ=America/Santiago` to ensure consistent timestamps and scheduling behavior
+
+---
+
+### Shared Utilities Package (`@coab/utils`)
+
+All Chilean-specific utilities are centralized in the `@coab/utils` workspace package to avoid code duplication between frontend and backend.
+
+| Function | Description |
+|----------|-------------|
+| `validarRUT(rut)` | Validates Chilean RUT using Modulus 11 algorithm |
+| `formatearRUT(rut)` | Formats RUT as XX.XXX.XXX-X |
+| `limpiarRUT(rut)` | Removes formatting (digits + K only) |
+| `formatearPesos(amount)` | Formats as Chilean Pesos ($1.234.567) |
+| `formatearNumero(value)` | Formats with Chilean thousands separator |
+| `formatearFecha(date, format)` | Formats dates with es-CL locale |
+| `formatearFechaCorta(date)` | dd/MM/yyyy format |
+| `formatearFechaLarga(date)` | d 'de' MMMM 'de' yyyy format |
+
+**Usage:**
+```typescript
+// Import in any frontend or backend file
+import { validarRUT, formatearRUT, formatearPesos } from '@coab/utils';
+
+validarRUT('12.345.678-5');    // true
+formatearRUT('123456785');      // '12.345.678-5'
+formatearPesos(1234567);        // '$1.234.567'
+```
+
+**Why a Shared Package?**
+- **Single source of truth** for Chilean validation logic
+- **Type safety** shared between frontend and backend
+- **Easier testing** - test utilities once in isolation
+- **No code drift** between implementations
 
 ---
 
@@ -454,6 +487,59 @@ CNAME  www.coab.cl          → coab-platform.pages.dev
 
 ## Package.json Structure
 
+### Root (`package.json`) - Monorepo Workspaces
+
+```json
+{
+  "name": "coab-platform",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "coab-backend",
+    "coab-frontend"
+  ],
+  "scripts": {
+    "build:utils": "npm run build -w @coab/utils",
+    "dev:backend": "npm run dev -w coab-backend",
+    "dev:frontend": "npm run dev -w coab-frontend",
+    "build": "npm run build -w @coab/utils && npm run build -w coab-backend && npm run build -w coab-frontend"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
+```
+
+### Shared Utils (`packages/coab-utils/package.json`)
+
+```json
+{
+  "name": "@coab/utils",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "date-fns": "^4.1.0"
+  }
+}
+```
+
 ### Backend (`coab-backend/package.json`)
 
 ```json
@@ -470,6 +556,7 @@ CNAME  www.coab.cl          → coab-platform.pages.dev
     "test": "vitest"
   },
   "dependencies": {
+    "@coab/utils": "workspace:*",
     "fastify": "^5.0.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/helmet": "^12.0.0",
@@ -484,7 +571,8 @@ CNAME  www.coab.cl          → coab-platform.pages.dev
     "jose": "^5.0.0",
     "pino": "^9.0.0",
     "pino-http": "^10.0.0",
-    "@sentry/node": "^8.0.0"
+    "@sentry/node": "^8.0.0",
+    "date-fns": "^4.1.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
@@ -511,6 +599,7 @@ CNAME  www.coab.cl          → coab-platform.pages.dev
     "test": "vitest"
   },
   "dependencies": {
+    "@coab/utils": "workspace:*",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
     "react-router": "^7.8.2",
@@ -518,14 +607,14 @@ CNAME  www.coab.cl          → coab-platform.pages.dev
     "react-hook-form": "^7.0.0",
     "axios": "^1.0.0",
     "zod": "^4.0.0",
-    "date-fns": "^4.0.0"
+    "date-fns": "^4.1.0"
   },
   "devDependencies": {
     "vite": "^7.0.0",
     "@vitejs/plugin-react": "^4.0.0",
     "typescript": "^5.0.0",
-    "tailwindcss": "^4.0.0",
-    "@tailwindcss/vite": "^4.0.0",
+    "tailwindcss": "^4.1.0",
+    "@tailwindcss/vite": "^4.1.0",
     "vitest": "^2.0.0",
     "eslint": "^9.0.0",
     "prettier": "^3.0.0"
