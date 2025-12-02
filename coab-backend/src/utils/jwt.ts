@@ -10,6 +10,7 @@ export interface TokenPayload extends JWTPayload {
   tipo: 'cliente' | 'admin';
   rut?: string;
   email?: string;
+  rol?: string;
 }
 
 // Encode secret once

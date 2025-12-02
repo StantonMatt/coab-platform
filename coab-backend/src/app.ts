@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import { env } from './config/env.js';
 import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
+import adminRoutes from './routes/admin.routes.js';
 
 // Fix BigInt JSON serialization globally
 // Prisma returns BigInt for BIGSERIAL columns
@@ -107,8 +108,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Customer routes (profile, balance, pagos, boletas)
       await api.register(customerRoutes, { prefix: '/clientes' });
 
-      // TODO: Register admin routes in Iteration 4
-      // api.register(adminRoutes, { prefix: '/admin' });
+      // Admin routes (customer management, account unlock)
+      await api.register(adminRoutes, { prefix: '/admin' });
     },
     { prefix: '/api/v1' }
   );

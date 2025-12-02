@@ -6,6 +6,8 @@ import { Toaster } from '@/components/ui/toaster';
 import LoginPage from './pages/Login';
 import DashboardPage from './pages/Dashboard';
 import BoletaDetailPage from './pages/BoletaDetail';
+import AdminLoginPage from './pages/admin/Login';
+import AdminDashboardPage from './pages/admin/Dashboard';
 import './index.css';
 
 // Configure React Query
@@ -24,13 +26,20 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
+          {/* Customer Portal */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/boletas/:id" element={<BoletaDetailPage />} />
           <Route path="/" element={<Navigate to="/login" replace />} />
+          
+          {/* Admin Portal */}
+          <Route path="/admin/login" element={<AdminLoginPage />} />
+          <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
+          <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
+          
           {/* Future routes */}
           {/* <Route path="/recuperar" element={<RecoverPage />} /> */}
-          {/* <Route path="/admin/login" element={<AdminLoginPage />} /> */}
+          {/* <Route path="/admin/clientes" element={<AdminClientesPage />} /> */}
         </Routes>
         <Toaster />
       </BrowserRouter>

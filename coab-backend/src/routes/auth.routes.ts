@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { ZodError } from 'zod';
 import {
   loginClienteSchema,
+  loginAdminSchema,
   refreshSchema,
 } from '../schemas/auth.schema.js';
 import * as authService from '../services/auth.service.js';
@@ -70,21 +71,95 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * POST /auth/admin/login
+   * Admin login with email and password
+   */
+  fastify.post('/admin/login', async (request, reply) => {
+    try {
+      // Validate input
+      const body = loginAdminSchema.parse(request.body);
+
+      // Attempt login
+      const result = await authService.loginAdmin(
+        body.email,
+        body.password,
+        request.ip,
+        request.headers['user-agent'] || ''
+      );
+
+      fastify.log.info(
+        { email: body.email, ip: request.ip },
+        'Login exitoso para admin'
+      );
+
+      return result;
+    } catch (error) {
+      // Handle Zod validation errors
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: error.errors[0].message,
+            details: error.errors,
+          },
+        });
+      }
+
+      // Handle auth errors
+      if (error instanceof AuthError) {
+        fastify.log.warn(
+          { code: error.code, ip: request.ip },
+          `Login admin fallido: ${error.message}`
+        );
+
+        return reply.code(error.statusCode).send({
+          error: {
+            code: error.code,
+            message: error.message,
+          },
+        });
+      }
+
+      // Unknown error
+      fastify.log.error(error, 'Error inesperado en login admin');
+      return reply.code(500).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Error interno del servidor',
+        },
+      });
+    }
+  });
+
+  /**
    * POST /auth/refresh
    * Refresh access token using refresh token
    * Implements token rotation
+   * Supports both cliente and admin tokens via tipo parameter
    */
   fastify.post('/refresh', async (request, reply) => {
     try {
       const body = refreshSchema.parse(request.body);
 
-      const tokens = await authService.refreshAccessToken(
-        body.refreshToken,
-        request.ip,
-        request.headers['user-agent'] || ''
-      );
+      let tokens;
+      if (body.tipo === 'admin') {
+        tokens = await authService.refreshAdminToken(
+          body.refreshToken,
+          request.ip,
+          request.headers['user-agent'] || ''
+        );
+      } else {
+        tokens = await authService.refreshAccessToken(
+          body.refreshToken,
+          request.ip,
+          request.headers['user-agent'] || ''
+        );
+      }
 
-      fastify.log.info({ ip: request.ip }, 'Token refrescado exitosamente');
+      fastify.log.info(
+        { ip: request.ip, tipo: body.tipo },
+        'Token refrescado exitosamente'
+      );
 
       return tokens;
     } catch (error) {

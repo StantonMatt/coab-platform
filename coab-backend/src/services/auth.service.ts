@@ -262,3 +262,202 @@ export async function hashPassword(password: string): Promise<string> {
   });
 }
 
+/**
+ * Login an admin with email and password
+ * Uses perfiles table with is_admin = true
+ */
+export async function loginAdmin(
+  email: string,
+  password: string,
+  ip: string,
+  userAgent: string
+) {
+  // Find admin by email (correo field)
+  const admin = await prisma.perfiles.findFirst({
+    where: {
+      correo: email.toLowerCase(),
+      is_admin: true,
+    },
+  });
+
+  if (!admin) {
+    throw new AuthError('Credenciales inválidas', 'INVALID_CREDENTIALS');
+  }
+
+  // Check if password is set
+  if (!admin.hash_contrasena) {
+    throw new AuthError(
+      'Cuenta no configurada. Contacte al administrador.',
+      'ACCOUNT_NOT_SETUP',
+      403
+    );
+  }
+
+  // Check if account is locked
+  if (admin.bloqueado_hasta && admin.bloqueado_hasta > new Date()) {
+    const minutosRestantes = Math.ceil(
+      (admin.bloqueado_hasta.getTime() - Date.now()) / 60000
+    );
+    throw new AuthError(
+      `Cuenta bloqueada. Intente en ${minutosRestantes} minutos.`,
+      'ACCOUNT_LOCKED',
+      423
+    );
+  }
+
+  // Verify password with Argon2id
+  let passwordValid = false;
+  try {
+    passwordValid = await verify(admin.hash_contrasena, password);
+  } catch {
+    passwordValid = false;
+  }
+
+  if (!passwordValid) {
+    // Increment failed attempts
+    const newAttempts = admin.intentos_fallidos + 1;
+    const shouldLock = newAttempts >= 5;
+
+    await prisma.perfiles.update({
+      where: { id: admin.id },
+      data: {
+        intentos_fallidos: newAttempts,
+        bloqueado_hasta: shouldLock
+          ? new Date(Date.now() + 15 * 60 * 1000) // 15 minutes
+          : null,
+      },
+    });
+
+    if (shouldLock) {
+      throw new AuthError(
+        'Cuenta bloqueada por múltiples intentos fallidos. Intente en 15 minutos.',
+        'ACCOUNT_LOCKED',
+        423
+      );
+    }
+
+    throw new AuthError('Credenciales inválidas', 'INVALID_CREDENTIALS');
+  }
+
+  // Reset failed attempts on successful login
+  await prisma.perfiles.update({
+    where: { id: admin.id },
+    data: {
+      intentos_fallidos: 0,
+      bloqueado_hasta: null,
+      ultimo_inicio_sesion: new Date(),
+    },
+  });
+
+  // Generate tokens (8h for admin, handled by jwt.ts)
+  const accessToken = await generateAccessToken({
+    userId: admin.id,
+    tipo: 'admin',
+    email: admin.correo || undefined,
+    rol: admin.rol,
+  });
+
+  const refreshToken = generateRefreshToken();
+  const tokenHash = hashRefreshToken(refreshToken);
+
+  // Store refresh token hash
+  await prisma.sesion_refresh.create({
+    data: {
+      token_hash: tokenHash,
+      usuario_tipo: 'admin',
+      usuario_id: admin.id,
+      expira_en: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+    },
+  });
+
+  // Build full name
+  const nombreCompleto = [admin.nombre, admin.apellido]
+    .filter(Boolean)
+    .join(' ') || 'Administrador';
+
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: admin.id,
+      email: admin.correo,
+      nombre: nombreCompleto,
+      rol: admin.rol,
+    },
+  };
+}
+
+/**
+ * Refresh an admin access token using a refresh token
+ * Implements token rotation for security
+ */
+export async function refreshAdminToken(
+  refreshToken: string,
+  ip: string,
+  userAgent: string
+) {
+  // Hash the provided refresh token
+  const tokenHash = hashRefreshToken(refreshToken);
+
+  // Find valid session
+  const session = await prisma.sesion_refresh.findFirst({
+    where: {
+      token_hash: tokenHash,
+      usuario_tipo: 'admin',
+      expira_en: { gt: new Date() },
+      revocado: false,
+    },
+  });
+
+  if (!session) {
+    throw new AuthError(
+      'Token de refresco inválido o expirado',
+      'INVALID_REFRESH_TOKEN'
+    );
+  }
+
+  // Find the admin (usuario_id is UUID for admins)
+  const admin = await prisma.perfiles.findUnique({
+    where: { id: session.usuario_id },
+  });
+
+  if (!admin || !admin.is_admin) {
+    throw new AuthError('Usuario no encontrado', 'USER_NOT_FOUND');
+  }
+
+  // Delete old session (token rotation)
+  await prisma.sesion_refresh.delete({ where: { id: session.id } });
+
+  // Generate new tokens
+  const newAccessToken = await generateAccessToken({
+    userId: admin.id,
+    tipo: 'admin',
+    email: admin.correo || undefined,
+    rol: admin.rol,
+  });
+
+  const newRefreshToken = generateRefreshToken();
+  const newTokenHash = hashRefreshToken(newRefreshToken);
+
+  // Store new refresh token
+  await prisma.sesion_refresh.create({
+    data: {
+      token_hash: newTokenHash,
+      usuario_tipo: 'admin',
+      usuario_id: admin.id,
+      expira_en: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+    },
+  });
+
+  // Update last activity
+  await prisma.perfiles.update({
+    where: { id: admin.id },
+    data: { ultimo_inicio_sesion: new Date() },
+  });
+
+  return {
+    accessToken: newAccessToken,
+    refreshToken: newRefreshToken,
+  };
+}
+

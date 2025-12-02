@@ -15,9 +15,11 @@ export const loginClienteSchema = z.object({
 
 /**
  * Refresh token schema
+ * tipo: 'cliente' (default) or 'admin'
  */
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token requerido'),
+  tipo: z.enum(['cliente', 'admin']).default('cliente'),
 });
 
 /**

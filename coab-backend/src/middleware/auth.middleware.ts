@@ -8,7 +8,7 @@ import { env } from '../config/env.js';
 declare module 'fastify' {
   interface FastifyRequest {
     user?: {
-      userId: bigint;
+      userId: bigint | string; // bigint for clientes, UUID string for admins
       tipo: 'cliente' | 'admin';
       rut?: string;
       email?: string;
@@ -18,6 +18,16 @@ declare module 'fastify' {
 }
 
 const secret = new TextEncoder().encode(env.JWT_SECRET);
+
+/**
+ * Admin roles hierarchy
+ * Higher number = more permissions
+ */
+const ROLE_HIERARCHY: Record<string, number> = {
+  billing_clerk: 1,
+  supervisor: 2,
+  admin: 3,
+};
 
 /**
  * Middleware to require a valid cliente (customer) JWT token
@@ -81,7 +91,6 @@ export async function requireCliente(
 
 /**
  * Middleware to require a valid admin JWT token
- * For future use in admin routes (Iteration 4+)
  */
 export async function requireAdmin(
   request: FastifyRequest,
@@ -113,9 +122,9 @@ export async function requireAdmin(
       });
     }
 
-    // Attach user data to request
+    // Attach user data to request (userId is UUID string for admins)
     request.user = {
-      userId: BigInt(payload.userId as string),
+      userId: payload.userId as string,
       tipo: 'admin',
       email: payload.email as string | undefined,
       rol: payload.rol as string | undefined,
@@ -137,5 +146,33 @@ export async function requireAdmin(
       },
     });
   }
+}
+
+/**
+ * Middleware factory to require a specific admin role (or higher)
+ * Usage: requireRole('supervisor') - allows supervisor and admin
+ * @param minRole - Minimum required role
+ */
+export function requireRole(minRole: 'billing_clerk' | 'supervisor' | 'admin') {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    // First check admin auth
+    await requireAdmin(request, reply);
+
+    // If reply was already sent (auth failed), return
+    if (reply.sent) return;
+
+    const userRole = request.user?.rol || 'billing_clerk';
+    const userLevel = ROLE_HIERARCHY[userRole] || 0;
+    const requiredLevel = ROLE_HIERARCHY[minRole] || 0;
+
+    if (userLevel < requiredLevel) {
+      return reply.code(403).send({
+        error: {
+          code: 'INSUFFICIENT_PERMISSIONS',
+          message: `Se requiere rol ${minRole} o superior`,
+        },
+      });
+    }
+  };
 }
 
