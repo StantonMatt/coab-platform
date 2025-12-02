@@ -43,6 +43,7 @@ export async function searchCustomers(
       OR: searchConditions,
     },
     take: limit + 1,
+    skip: cursor ? 1 : 0,
     cursor: cursor ? { id: BigInt(cursor) } : undefined,
     orderBy: { primer_apellido: 'asc' },
     select: {
@@ -227,6 +228,7 @@ export async function getCustomerPayments(
   const payments = await prisma.pagos.findMany({
     where: { cliente_id: clienteId },
     take: limit + 1,
+    skip: cursor ? 1 : 0,
     cursor: cursor ? { id: BigInt(cursor) } : undefined,
     orderBy: { fecha_pago: 'desc' },
     select: {
@@ -271,6 +273,7 @@ export async function getCustomerBoletas(
   const boletas = await prisma.boletas.findMany({
     where: { cliente_id: clienteId },
     take: limit + 1,
+    skip: cursor ? 1 : 0,
     cursor: cursor ? { id: BigInt(cursor) } : undefined,
     orderBy: { fecha_emision: 'desc' },
     select: {
@@ -420,4 +423,5 @@ export async function getCustomerById(clienteId: bigint) {
       cliente.bloqueado_hasta > new Date(),
   };
 }
+
 
