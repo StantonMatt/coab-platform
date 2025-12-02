@@ -1,17 +1,154 @@
 import { FastifyPluginAsync } from 'fastify';
-import { z } from 'zod';
 import { ZodError } from 'zod';
 import * as adminService from '../services/admin.service.js';
 import { requireAdmin } from '../middleware/auth.middleware.js';
-
-// Schema for customer ID parameter
-const clienteIdSchema = z.object({
-  id: z.string().regex(/^\d+$/, 'ID debe ser numérico'),
-});
+import {
+  searchSchema,
+  paginationSchema,
+  customerIdSchema,
+} from '../schemas/admin.schema.js';
 
 const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // Apply admin auth middleware to all routes
   fastify.addHook('onRequest', requireAdmin);
+
+  /**
+   * GET /admin/clientes?q=...
+   * Search customers by RUT, name, or address
+   */
+  fastify.get('/clientes', async (request, reply) => {
+    try {
+      const query = searchSchema.parse(request.query);
+      const result = await adminService.searchCustomers(
+        query.q,
+        query.limit,
+        query.cursor
+      );
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: error.errors[0].message,
+          },
+        });
+      }
+      fastify.log.error(error, 'Error al buscar clientes');
+      return reply.code(500).send({
+        error: {
+          code: 'SEARCH_FAILED',
+          message: 'Error al buscar clientes',
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/clientes/:id
+   * Get customer profile for admin view
+   */
+  fastify.get('/clientes/:id', async (request, reply) => {
+    try {
+      const params = customerIdSchema.parse(request.params);
+      const customer = await adminService.getCustomerProfile(BigInt(params.id));
+      return customer;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: error.errors[0].message,
+          },
+        });
+      }
+
+      if (error.message === 'Cliente no encontrado') {
+        return reply.code(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: error.message,
+          },
+        });
+      }
+
+      fastify.log.error(error, 'Error al obtener cliente');
+      return reply.code(500).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Error al obtener cliente',
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/clientes/:id/pagos
+   * Get customer payment history
+   */
+  fastify.get('/clientes/:id/pagos', async (request, reply) => {
+    try {
+      const params = customerIdSchema.parse(request.params);
+      const query = paginationSchema.parse(request.query);
+
+      const result = await adminService.getCustomerPayments(
+        BigInt(params.id),
+        query.limit,
+        query.cursor
+      );
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: error.errors[0].message,
+          },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener pagos');
+      return reply.code(500).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Error al obtener pagos',
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/clientes/:id/boletas
+   * Get customer boletas
+   */
+  fastify.get('/clientes/:id/boletas', async (request, reply) => {
+    try {
+      const params = customerIdSchema.parse(request.params);
+      const query = paginationSchema.parse(request.query);
+
+      const result = await adminService.getCustomerBoletas(
+        BigInt(params.id),
+        query.limit,
+        query.cursor
+      );
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: error.errors[0].message,
+          },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener boletas');
+      return reply.code(500).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Error al obtener boletas',
+        },
+      });
+    }
+  });
 
   /**
    * POST /admin/clientes/:id/desbloquear
@@ -19,7 +156,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
    */
   fastify.post('/clientes/:id/desbloquear', async (request, reply) => {
     try {
-      const params = clienteIdSchema.parse(request.params);
+      const params = customerIdSchema.parse(request.params);
 
       const result = await adminService.unlockCustomerAccount(
         BigInt(params.id),
@@ -60,47 +197,6 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   });
-
-  /**
-   * GET /admin/clientes/:id
-   * Get customer details for admin view
-   */
-  fastify.get('/clientes/:id', async (request, reply) => {
-    try {
-      const params = clienteIdSchema.parse(request.params);
-
-      const cliente = await adminService.getCustomerById(BigInt(params.id));
-
-      if (!cliente) {
-        return reply.code(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Cliente no encontrado',
-          },
-        });
-      }
-
-      return cliente;
-    } catch (error: any) {
-      if (error instanceof ZodError) {
-        return reply.code(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: error.errors[0].message,
-          },
-        });
-      }
-
-      fastify.log.error(error, 'Error al obtener cliente');
-      return reply.code(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: 'Error al obtener cliente',
-        },
-      });
-    }
-  });
 };
 
 export default adminRoutes;
-

@@ -8,6 +8,8 @@ import DashboardPage from './pages/Dashboard';
 import BoletaDetailPage from './pages/BoletaDetail';
 import AdminLoginPage from './pages/admin/Login';
 import AdminDashboardPage from './pages/admin/Dashboard';
+import AdminCustomersPage from './pages/admin/Customers';
+import AdminCustomerProfilePage from './pages/admin/CustomerProfile';
 import './index.css';
 
 // Configure React Query
@@ -35,11 +37,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           {/* Admin Portal */}
           <Route path="/admin/login" element={<AdminLoginPage />} />
           <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
+          <Route path="/admin/clientes" element={<AdminCustomersPage />} />
+          <Route path="/admin/clientes/:id" element={<AdminCustomerProfilePage />} />
           <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
-          
-          {/* Future routes */}
-          {/* <Route path="/recuperar" element={<RecoverPage />} /> */}
-          {/* <Route path="/admin/clientes" element={<AdminClientesPage />} /> */}
         </Routes>
         <Toaster />
       </BrowserRouter>
