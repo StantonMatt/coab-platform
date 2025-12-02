@@ -506,3 +506,16 @@ model log_auditoria {
   @@index([usuario_tipo, usuario_email], map: "idx_log_auditoria_usuario")
   @@index([creado_en], map: "idx_log_auditoria_fecha")
 }
+
+/// System notifications for service interruptions (public)
+model notificaciones_sistema {
+  id        BigInt   @id @default(autoincrement())
+  mensaje   String
+  tipo      String   @default("info") // info, warning, critical
+  activo    Boolean  @default(true)
+  desde     DateTime @db.Timestamptz(6)
+  hasta     DateTime @db.Timestamptz(6)
+  creado_en DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([activo, desde, hasta], map: "idx_notificaciones_activas")
+}
