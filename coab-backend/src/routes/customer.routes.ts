@@ -39,7 +39,7 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
      */
     protectedRoutes.get('/me', async (request, reply) => {
       try {
-        const clienteId = request.user!.userId;
+        const clienteId = request.user!.userId as bigint;
         const profile = await customerService.getCustomerProfile(clienteId);
         return profile;
       } catch (error: any) {
@@ -61,7 +61,7 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
      */
     protectedRoutes.get('/me/saldo', async (request, reply) => {
       try {
-        const clienteId = request.user!.userId;
+        const clienteId = request.user!.userId as bigint;
         const balance = await customerService.getCustomerBalance(clienteId);
         return balance;
       } catch (error) {
@@ -79,7 +79,7 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
     protectedRoutes.get('/me/pagos', async (request, reply) => {
       try {
         const query = paginationSchema.parse(request.query);
-        const clienteId = request.user!.userId;
+        const clienteId = request.user!.userId as bigint;
 
         const result = await customerService.getCustomerPayments(
           clienteId,
@@ -111,7 +111,7 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
     protectedRoutes.get('/me/boletas', async (request, reply) => {
       try {
         const query = paginationSchema.parse(request.query);
-        const clienteId = request.user!.userId;
+        const clienteId = request.user!.userId as bigint;
 
         const result = await customerService.getCustomerBoletas(
           clienteId,
@@ -143,7 +143,7 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
     protectedRoutes.get('/me/boletas/:id', async (request, reply) => {
       try {
         const params = boletaIdSchema.parse(request.params);
-        const clienteId = request.user!.userId;
+        const clienteId = request.user!.userId as bigint;
 
         const boleta = await customerService.getBoletaById(
           clienteId,
