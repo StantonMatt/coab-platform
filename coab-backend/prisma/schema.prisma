@@ -1,0 +1,508 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model clientes {
+  id                   BigInt                 @id @default(autoincrement())
+  numero_cliente       String
+  primer_apellido      String
+  segundo_apellido     String?
+  primer_nombre        String
+  segundo_nombre       String?
+  rut                  String?                @unique
+  telefono             String?
+  correo               String?
+  fecha_creacion       DateTime               @default(now()) @db.Timestamptz(6)
+  excluir_cargo_fijo   Boolean                @default(false)
+  recibe_factura       Boolean                @default(false)
+  nombre_pagante       String?
+  es_cliente_actual    Boolean                @default(true)
+  fecha_inicio         DateTime?              @db.Date
+  fecha_termino        DateTime?              @db.Date
+  // Auth fields
+  hash_contrasena      String?
+  estado_cuenta        String                 @default("pendiente") // pendiente, activa, bloqueada, suspendida
+  ultimo_inicio_sesion DateTime?              @db.Timestamptz(6)
+  intentos_fallidos    Int                    @default(0)
+  bloqueado_hasta      DateTime?              @db.Timestamptz(6)
+  // Relations
+  boletas              boletas[]
+  descuentos_aplicados descuentos_aplicados[]
+  direcciones          direcciones[]
+  multas               multas[]
+  notas_de_credito     notas_de_credito[]
+  pagos                pagos[]
+  repactaciones        repactaciones[]
+  saldos_iniciales     saldos_iniciales?
+  subsidio_historial   subsidio_historial[]
+  tokens_configuracion token_configuracion[]
+
+  @@index([primer_apellido, segundo_apellido], map: "idx_clientes_apellidos")
+  @@index([numero_cliente, es_cliente_actual], map: "idx_clientes_numero_actual")
+  @@index([rut], map: "idx_clientes_rut")
+}
+
+model perfiles {
+  id                   String          @id @db.Uuid
+  nombre               String?
+  apellido             String?
+  fecha_nacimiento     DateTime?       @db.Date
+  correo               String?
+  telefono             String?
+  fecha_creacion       DateTime?       @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion  DateTime?       @db.Timestamptz(6)
+  is_admin             Boolean         @default(false)
+  // Auth fields
+  hash_contrasena      String?
+  rol                  String          @default("admin") // admin, billing_clerk, supervisor
+  ultimo_inicio_sesion DateTime?       @db.Timestamptz(6)
+  intentos_fallidos    Int             @default(0)
+  bloqueado_hasta      DateTime?       @db.Timestamptz(6)
+  // Relations
+  active_period        active_period[]
+}
+
+model boletas {
+  id                               BigInt                 @id @default(autoincrement())
+  numero_cliente                   String
+  cliente_id                       BigInt?
+  fecha_emision                    DateTime               @default(dbgenerated("CURRENT_DATE")) @db.Date
+  fecha_vencimiento                DateTime               @db.Date
+  periodo_desde                    DateTime               @db.Date
+  periodo_hasta                    DateTime               @db.Date
+  monto_neto                       Decimal                @default(0) @db.Decimal
+  monto_iva                        Decimal                @default(0) @db.Decimal
+  monto_subsidio                   Decimal                @default(0) @db.Decimal
+  monto_repactacion                Decimal                @default(0) @db.Decimal
+  monto_otros_cargos               Decimal                @default(0) @db.Decimal
+  monto_saldo_anterior             Decimal                @default(0) @db.Decimal
+  monto_total                      Decimal                @default(0) @db.Decimal
+  estado                           String                 @default("pendiente")
+  tipo_boleta                      String?                @default("mensual")
+  observaciones                    String?
+  repactacion_id                   BigInt?
+  fecha_creacion                   DateTime               @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion              DateTime               @default(now()) @db.Timestamptz(6)
+  numero_folio                     String?                @unique
+  monto_descuento                  Decimal?               @default(0) @db.Decimal(12, 2)
+  monto_interes                    Decimal?               @default(0.00) @db.Decimal(10, 2)
+  dias_vencido                     Int?                   @default(0)
+  monto_total_mes                  Decimal?               @default(0) @db.Decimal(10, 2)
+  monto_total_subsidiado           Decimal?               @default(0) @db.Decimal(10, 2)
+  consumo_m3                       Decimal?               @default(0) @db.Decimal(10, 3)
+  costo_agua                       Decimal?               @db.Decimal(10, 2)
+  costo_alcantarillado             Decimal?               @db.Decimal(10, 2)
+  costo_tratamiento                Decimal?               @db.Decimal(10, 2)
+  costo_alcantarillado_tratamiento Decimal?               @db.Decimal(10, 2)
+  costo_cargo_fijo                 Decimal?               @db.Decimal(10, 2)
+  cliente                          clientes?              @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  repactacion                      repactaciones?         @relation(fields: [repactacion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  descuentos_aplicados             descuentos_aplicados[]
+  multas                           multas[]
+
+  @@index([cliente_id], map: "idx_boletas_cliente")
+  @@index([estado], map: "idx_boletas_estado")
+  @@index([fecha_emision], map: "idx_boletas_fecha_emision")
+  @@index([numero_cliente], map: "idx_boletas_numero_cliente")
+  @@index([repactacion_id], map: "idx_boletas_repactacion_id")
+}
+
+model pagos {
+  id                     BigInt    @id @default(autoincrement())
+  numero_cliente         String?
+  cliente_id             BigInt?
+  monto                  Decimal   @db.Decimal
+  fecha_pago             DateTime  @default(now()) @db.Date
+  tipo_pago              String
+  numero_transaccion     String?
+  estado                 String    @default("completado")
+  estado_detalle         String?
+  comprobante_url        String?
+  operador               String?
+  observaciones          String?
+  fecha_creacion         DateTime  @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion    DateTime  @default(now()) @db.Timestamptz(6)
+  procesado              Boolean   @default(false)
+  ai_confidence          String?
+  direccion_cliente      String?
+  folio_boleta           String?
+  identificador_origen   String?
+  nombre_cliente         String?
+  nombre_pagante         String?
+  rut_cliente            String?
+  source                 String?
+  correo_banco           String?
+  correo_remitente       String?
+  es_remitente_confiable Boolean?
+  metodo_importacion     String?
+  cliente                clientes? @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([numero_cliente, monto, identificador_origen, numero_transaccion])
+  @@index([estado], map: "idx_pagos_estado")
+  @@index([fecha_pago], map: "idx_pagos_fecha")
+  @@index([numero_cliente], map: "idx_pagos_numero_cliente")
+  @@index([procesado, estado], map: "idx_pagos_procesado_estado")
+}
+
+model direcciones {
+  id               BigInt      @id @default(autoincrement())
+  cliente_id       BigInt
+  comuna           String
+  fecha_creacion   DateTime    @default(now()) @db.Timestamptz(6)
+  ruta_id          BigInt
+  direccion_calle  String
+  direccion_numero String?
+  poblacion        String
+  lote             String?
+  tipo_vivienda    String?
+  orden_ruta       Int
+  cliente          clientes    @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ruta             rutas       @relation(fields: [ruta_id], references: [id])
+  medidores        medidores[]
+
+  @@index([cliente_id], map: "idx_direcciones_cliente_id")
+  @@index([ruta_id], map: "idx_direcciones_ruta_id")
+}
+
+model rutas {
+  id                  BigInt        @id @default(autoincrement())
+  nombre              String        @unique
+  descripcion         String?
+  fecha_creacion      DateTime      @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion DateTime      @db.Timestamptz(6)
+  direcciones         direcciones[]
+}
+
+model medidores {
+  id                BigInt      @id @default(autoincrement())
+  direccion_id      BigInt
+  numero_serie      String?
+  marca             String?
+  modelo            String?
+  fecha_instalacion DateTime?   @db.Date
+  fecha_retiro      DateTime?   @db.Date
+  estado            String      @default("activo")
+  fecha_creacion    DateTime    @default(now()) @db.Timestamptz(6)
+  mostrar_en_ruta   Boolean     @default(true)
+  lectura_inicial   Int         @default(0)
+  lecturas          lecturas[]
+  direccion         direcciones @relation(fields: [direccion_id], references: [id], onUpdate: NoAction)
+
+  @@index([direccion_id], map: "idx_medidores_direccion_id")
+  @@index([estado], map: "idx_medidores_estado")
+}
+
+model lecturas {
+  id                              BigInt                @id @default(autoincrement())
+  medidor_id                      BigInt
+  fecha_lectura                   DateTime              @db.Date
+  valor_lectura                   Decimal               @db.Decimal(12, 3)
+  observaciones                   String?
+  fecha_creacion                  DateTime              @default(now()) @db.Timestamptz(6)
+  advertencia                     String?
+  confirmada                      Boolean               @default(false)
+  notas_no_acceso                 String?
+  periodo_ano                     Int
+  periodo_mes                     Int
+  tipo_lectura                    String
+  usuario_id                      String?
+  propiedad_vacante               Boolean               @default(false)
+  syncStatus                      String?
+  notas_advertencia               String?
+  atencion_propiedad              Boolean?
+  descripcion_problema_suministro String?
+  meses_residencia                Int?
+  problema_suministro             Boolean?
+  propiedad_parece_habitada       Boolean?
+  senales_habitada_cortinas       Boolean?
+  senales_habitada_jardin         Boolean?
+  senales_habitada_luces          Boolean?
+  senales_habitada_vehiculos      Boolean?
+  device_accuracy                 Decimal?              @db.Decimal(18, 8)
+  device_latitude                 Decimal?              @db.Decimal(9, 6)
+  device_longitude                Decimal?              @db.Decimal(10, 6)
+  device_timestamp                DateTime?             @db.Timestamptz(6)
+  tiene_correccion                Boolean?              @default(false)
+  lectura_correcciones            lectura_correcciones?
+  medidor                         medidores             @relation(fields: [medidor_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([medidor_id, periodo_mes, periodo_ano])
+  @@index([fecha_lectura], map: "idx_lecturas_fecha_lectura")
+  @@index([medidor_id, fecha_lectura], map: "idx_lecturas_medidor_fecha")
+  @@index([medidor_id], map: "idx_lecturas_medidor_id")
+  @@index([periodo_mes, periodo_ano])
+}
+
+model lectura_correcciones {
+  id                  BigInt    @id @default(autoincrement())
+  lectura_original_id BigInt    @unique(map: "unique_lectura_correction")
+  valor_corregido     Decimal   @db.Decimal(10, 2)
+  motivo_correccion   String?
+  corregido_por       String?   @default("admin") @db.VarChar(255)
+  fecha_correccion    DateTime? @default(now()) @db.Timestamptz(6)
+  fecha_aplicacion    DateTime? @db.Timestamptz(6)
+  lectura_original    lecturas  @relation(fields: [lectura_original_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([lectura_original_id], map: "idx_correcciones_lectura")
+}
+
+model repactaciones {
+  id                  BigInt    @id @default(autoincrement())
+  numero_convenio     String?
+  numero_cliente      String
+  cliente_id          BigInt?
+  monto_deuda_inicial Decimal   @db.Decimal
+  total_cuotas        Int
+  monto_cuota_inicial Decimal   @db.Decimal
+  monto_cuota_base    Decimal   @db.Decimal
+  fecha_inicio        DateTime  @db.Date
+  fecha_termino_real  DateTime? @db.Date
+  estado              String    @default("activo")
+  observaciones       String?
+  fecha_creacion      DateTime  @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion DateTime  @default(now()) @db.Timestamptz(6)
+  boletas             boletas[]
+  cliente             clientes? @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([cliente_id], map: "idx_repactaciones_cliente")
+  @@index([estado], map: "idx_repactaciones_estado")
+  @@index([fecha_inicio, fecha_termino_real], map: "idx_repactaciones_fechas")
+  @@index([numero_cliente], map: "idx_repactaciones_numero_cliente")
+  @@index([numero_convenio], map: "idx_repactaciones_numero_convenio")
+}
+
+model notas_de_credito {
+  id                  BigInt    @id @default(autoincrement())
+  cliente_id          BigInt
+  numero_cliente      String
+  fecha_emision       DateTime  @default(now()) @db.Date
+  monto               Decimal   @db.Decimal
+  motivo              String
+  fecha_aplicacion    DateTime? @db.Date
+  usuario_creador     String?
+  fecha_creacion      DateTime  @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion DateTime  @default(now()) @db.Timestamptz(6)
+  aplicado            Boolean   @default(false)
+  cliente             clientes  @relation(fields: [cliente_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([cliente_id])
+  @@index([fecha_emision])
+}
+
+model saldos_iniciales {
+  id             BigInt   @id @default(autoincrement())
+  cliente_id     BigInt   @unique(map: "cliente_id_unique")
+  fecha_corte    DateTime @db.Date
+  monto_saldo    Decimal  @default(0) @db.Decimal
+  fecha_creacion DateTime @default(now()) @db.Timestamptz(6)
+  numero_cliente String
+  cliente        clientes @relation(fields: [cliente_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model subsidios {
+  id                 Int                  @id
+  limite_m3          Int
+  porcentaje         Decimal              @db.Decimal(5, 2)
+  fecha_inicio       DateTime             @db.Date
+  fecha_termino      DateTime?            @db.Date
+  numero_decreto     String?
+  observaciones      String?
+  estado             String               @default("activo")
+  fecha_creacion     DateTime             @default(now()) @db.Timestamptz(6)
+  subsidio_historial subsidio_historial[]
+}
+
+model subsidio_historial {
+  id             BigInt     @id @default(autoincrement())
+  cliente_id     BigInt
+  subsidio_id    Int?
+  fecha_cambio   DateTime   @default(now()) @db.Date
+  tipo_cambio    String
+  detalles       String?
+  fecha_creacion DateTime   @default(now()) @db.Timestamptz(6)
+  numero_cliente String
+  cliente        clientes   @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subsidio       subsidios? @relation(fields: [subsidio_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model tarifas {
+  id                                  BigInt    @id @default(autoincrement())
+  costo_despacho                      Decimal   @db.Decimal(10, 2)
+  costo_reposicion_1                  Decimal   @db.Decimal(10, 2)
+  costo_reposicion_2                  Decimal   @db.Decimal(10, 2)
+  costo_m3_agua                       Decimal   @db.Decimal(10, 2)
+  costo_m3_alcantarillado             Decimal?  @db.Decimal(10, 2)
+  costo_m3_tratamiento                Decimal?  @db.Decimal(10, 2)
+  cargo_fijo                          Decimal   @db.Decimal(10, 2)
+  tasa_iva                            Decimal   @db.Decimal(5, 3)
+  fecha_inicio                        DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  fecha_fin                           DateTime? @db.Date
+  fecha_creacion                      DateTime  @default(now()) @db.Timestamptz(6)
+  costo_m3_alcantarillado_tratamiento Decimal?  @db.Decimal(10, 2)
+  tasa_interes_mensual                Decimal?  @default(0.00) @db.Decimal(5, 4)
+  dias_gracia_interes                 Int?      @default(30)
+
+  @@index([fecha_fin], map: "idx_tarifas_fecha_fin")
+  @@index([fecha_inicio], map: "idx_tarifas_fecha_inicio")
+}
+
+model descuentos {
+  id                   BigInt                 @id @default(autoincrement())
+  nombre               String                 @db.VarChar(255)
+  descripcion          String?
+  tipo_descuento       String                 @db.VarChar(50)
+  valor                Decimal                @db.Decimal(10, 2)
+  fecha_inicio         DateTime               @db.Date
+  fecha_fin            DateTime?              @db.Date
+  activo               Boolean?               @default(true)
+  aplica_cargo_fijo    Boolean?               @default(true)
+  aplica_consumo       Boolean?               @default(true)
+  consumo_minimo       Decimal?               @db.Decimal(10, 2)
+  consumo_maximo       Decimal?               @db.Decimal(10, 2)
+  creado_por           String?                @db.VarChar(255)
+  fecha_creacion       DateTime?              @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion  DateTime?              @default(now()) @db.Timestamptz(6)
+  descuentos_aplicados descuentos_aplicados[]
+
+  @@index([activo], map: "idx_descuentos_activo")
+  @@index([fecha_inicio, fecha_fin], map: "idx_descuentos_fecha")
+  @@index([fecha_inicio, fecha_fin], map: "idx_descuentos_fechas")
+}
+
+model descuentos_aplicados {
+  id               BigInt      @id @default(autoincrement())
+  boleta_id        BigInt?
+  descuento_id     BigInt?
+  cliente_id       BigInt?
+  monto_aplicado   Decimal     @db.Decimal(10, 2)
+  fecha_aplicacion DateTime?   @default(now()) @db.Timestamptz(6)
+  boleta           boletas?    @relation(fields: [boleta_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cliente          clientes?   @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  descuento        descuentos? @relation(fields: [descuento_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([boleta_id, descuento_id])
+  @@unique([boleta_id, descuento_id], map: "unique_boleta_descuento")
+  @@index([boleta_id], map: "idx_descuentos_aplicados_boleta")
+  @@index([cliente_id], map: "idx_descuentos_aplicados_cliente")
+}
+
+model multas {
+  id                 BigInt    @id @default(autoincrement())
+  cliente_id         BigInt
+  monto              Decimal   @db.Decimal(12, 2)
+  fecha_aplicacion   DateTime  @db.Date
+  periodo_desde      DateTime? @db.Date
+  periodo_hasta      DateTime? @db.Date
+  motivo             String    @db.VarChar(255)
+  descripcion        String?
+  boleta_aplicada_id BigInt?
+  aplicada_por       String?   @db.VarChar(100)
+  cancelada_por      String?   @db.VarChar(100)
+  fecha_cancelacion  DateTime? @db.Timestamptz(6)
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime? @default(now()) @db.Timestamptz(6)
+  afecto_iva         Boolean?  @default(true)
+  boleta_aplicada    boletas?  @relation(fields: [boleta_aplicada_id], references: [id], onUpdate: NoAction)
+  cliente            clientes  @relation(fields: [cliente_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([boleta_aplicada_id], map: "idx_multas_boleta_aplicada_id")
+  @@index([cliente_id], map: "idx_multas_cliente_id")
+  @@index([fecha_aplicacion], map: "idx_multas_fecha_aplicacion")
+  @@index([periodo_desde, periodo_hasta], map: "idx_multas_periodo")
+}
+
+model active_period {
+  id                Int       @id @default(1)
+  year              Int
+  month             Int
+  enabled           Boolean   @default(false)
+  set_by_profile_id String?   @db.Uuid
+  notes             String?
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @db.Timestamptz(6)
+  set_by            perfiles? @relation(fields: [set_by_profile_id], references: [id])
+}
+
+model configuracion_global {
+  id                      Int      @id @default(autoincrement())
+  singleton_key           Int      @unique @default(1)
+  email_destinatarios_csv String[] @default([])
+  fecha_creacion          DateTime @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion     DateTime @db.Timestamptz(6)
+}
+
+model fechas_corte_pago {
+  id                        BigInt   @id @default(autoincrement())
+  periodo_referencia_inicio DateTime @unique @db.Date
+  fecha_corte               DateTime @db.Date
+  created_at                DateTime @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model planillas_procesadas {
+  id                   BigInt    @id @default(autoincrement())
+  archivo_nombre       String    @unique
+  fecha_corte          DateTime  @db.Date
+  fecha_procesado      DateTime? @default(now()) @db.Timestamptz(6)
+  registros_procesados Int?
+  registros_con_error  Int?
+  estado               String?
+  notas                String?
+}
+
+// ===========================================
+// Authentication Tables
+// ===========================================
+
+/// Token for password setup/reset links (Iteration 7 & 7.5)
+model token_configuracion {
+  id         BigInt   @id @default(autoincrement())
+  cliente_id BigInt
+  token      String   @unique
+  tipo       String   @default("setup") // setup, reset
+  usado      Boolean  @default(false)
+  expira_en  DateTime @db.Timestamptz(6)
+  creado_en  DateTime @default(now()) @db.Timestamptz(6)
+  cliente    clientes @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+
+  @@index([token], map: "idx_token_config_token")
+  @@index([cliente_id], map: "idx_token_config_cliente")
+}
+
+/// Refresh token sessions for JWT rotation
+model sesion_refresh {
+  id           BigInt   @id @default(autoincrement())
+  token_hash   String   @unique
+  usuario_tipo String // cliente, admin
+  usuario_id   String // cliente.id or perfiles.id
+  expira_en    DateTime @db.Timestamptz(6)
+  revocado     Boolean  @default(false)
+  creado_en    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([token_hash], map: "idx_sesion_refresh_hash")
+  @@index([usuario_tipo, usuario_id], map: "idx_sesion_refresh_usuario")
+}
+
+/// Audit log for compliance and debugging
+model log_auditoria {
+  id               BigInt   @id @default(autoincrement())
+  accion           String // REGISTRO_PAGO, DESBLOQUEO_CUENTA, etc.
+  entidad          String // cliente, transaccion_pago, etc.
+  entidad_id       BigInt?
+  usuario_tipo     String // admin, cliente, system
+  usuario_email    String?
+  datos_anteriores Json?    @db.JsonB
+  datos_nuevos     Json?    @db.JsonB
+  ip_address       String?
+  user_agent       String?
+  creado_en        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([entidad, entidad_id], map: "idx_log_auditoria_entidad")
+  @@index([usuario_tipo, usuario_email], map: "idx_log_auditoria_usuario")
+  @@index([creado_en], map: "idx_log_auditoria_fecha")
+}

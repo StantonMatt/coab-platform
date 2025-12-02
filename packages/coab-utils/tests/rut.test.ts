@@ -7,14 +7,14 @@ describe('validarRUT', () => {
     expect(validarRUT('11111111-1')).toBe(true);
     expect(validarRUT('22222222-2')).toBe(true);
     expect(validarRUT('12345678-5')).toBe(true);
-    expect(validarRUT('7654321-K')).toBe(true);
-    expect(validarRUT('7654321-k')).toBe(true); // lowercase K
+    expect(validarRUT('17608393-K')).toBe(true); // RUT with K as DV
+    expect(validarRUT('17608393-k')).toBe(true); // lowercase K
   });
 
   it('valida RUTs con formato (puntos y guión)', () => {
     expect(validarRUT('11.111.111-1')).toBe(true);
     expect(validarRUT('12.345.678-5')).toBe(true);
-    expect(validarRUT('7.654.321-K')).toBe(true);
+    expect(validarRUT('17.608.393-K')).toBe(true);
   });
 
   it('rechaza RUTs con DV incorrecto', () => {

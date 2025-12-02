@@ -1,0 +1,62 @@
+@import 'tailwindcss';
+
+/* Chilean theme colors as CSS variables */
+:root {
+  --color-primary: #0066CC;
+  --color-primary-dark: #004C99;
+  --color-primary-light: #3399FF;
+  --color-accent: #00AA44;
+  --color-accent-dark: #008833;
+  --color-accent-light: #33CC66;
+  --color-background: #F5F7FA;
+  --color-surface: #FFFFFF;
+  --color-text-primary: #1A1A2E;
+  --color-text-secondary: #4A4A68;
+  --color-text-muted: #8A8AA3;
+  --color-border: #E0E4E8;
+  --color-error: #DC2626;
+  --color-warning: #F59E0B;
+  --color-success: #10B981;
+}
+
+/* Custom Tailwind theme extension */
+@theme {
+  --color-primary: var(--color-primary);
+  --color-primary-dark: var(--color-primary-dark);
+  --color-primary-light: var(--color-primary-light);
+  --color-accent: var(--color-accent);
+  --color-accent-dark: var(--color-accent-dark);
+  --color-accent-light: var(--color-accent-light);
+}
+
+/* Base styles */
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Mobile-first touch targets */
+button, 
+a, 
+input[type="checkbox"], 
+input[type="radio"],
+[role="button"] {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Focus styles for accessibility */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+
+
+
+
+
+

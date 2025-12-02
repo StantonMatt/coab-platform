@@ -10,8 +10,9 @@ describe('formatearPesos', () => {
   });
 
   it('formatea números negativos', () => {
-    expect(formatearPesos(-1000)).toBe('-$1.000');
-    expect(formatearPesos(-1234567)).toBe('-$1.234.567');
+    // es-CL Intl format places minus after the currency symbol
+    expect(formatearPesos(-1000)).toBe('$-1.000');
+    expect(formatearPesos(-1234567)).toBe('$-1.234.567');
   });
 
   it('no incluye decimales', () => {

@@ -1,0 +1,94 @@
+import Fastify, { FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
+import { env } from './config/env.js';
+
+// Fix BigInt JSON serialization globally
+// Prisma returns BigInt for BIGSERIAL columns
+(BigInt.prototype as unknown as { toJSON(): string }).toJSON = function () {
+  return this.toString();
+};
+
+/**
+ * Build and configure the Fastify application
+ */
+export async function buildApp(): Promise<FastifyInstance> {
+  const app = Fastify({
+    logger: {
+      level: env.NODE_ENV === 'production' ? 'info' : 'debug',
+      transport:
+        env.NODE_ENV === 'development'
+          ? {
+              target: 'pino-pretty',
+              options: {
+                colorize: true,
+                translateTime: 'HH:MM:ss',
+                ignore: 'pid,hostname',
+              },
+            }
+          : undefined,
+    },
+  });
+
+  // Security headers
+  await app.register(helmet, {
+    contentSecurityPolicy: env.NODE_ENV === 'production',
+  });
+
+  // CORS configuration
+  await app.register(cors, {
+    origin: env.CORS_ORIGIN,
+    credentials: true,
+  });
+
+  // Rate limiting - general
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: '15 minutes',
+    errorResponseBuilder: () => ({
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Demasiadas solicitudes. Por favor intente más tarde.',
+      },
+    }),
+  });
+
+  // Health check endpoint (required for Railway)
+  app.get('/health', async () => {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      environment: env.NODE_ENV,
+    };
+  });
+
+  // API version prefix
+  app.register(
+    async (api) => {
+      // Health check within API
+      api.get('/health', async () => {
+        return {
+          status: 'ok',
+          timestamp: new Date().toISOString(),
+          version: 'v1',
+        };
+      });
+
+      // TODO: Register routes in future iterations
+      // api.register(authRoutes, { prefix: '/auth' });
+      // api.register(customerRoutes, { prefix: '/clientes' });
+      // api.register(adminRoutes, { prefix: '/admin' });
+    },
+    { prefix: '/api/v1' }
+  );
+
+  return app;
+}
+
+
+
+
+
+
+
