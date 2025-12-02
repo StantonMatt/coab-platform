@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { env } from './config/env.js';
+import authRoutes from './routes/auth.routes.js';
 
 // Fix BigInt JSON serialization globally
 // Prisma returns BigInt for BIGSERIAL columns
@@ -75,8 +76,34 @@ export async function buildApp(): Promise<FastifyInstance> {
         };
       });
 
+      // Auth routes with stricter rate limiting
+      await api.register(
+        async (authApi) => {
+          // Stricter rate limit for auth endpoints
+          // Development: 20 attempts per 5 minutes (for testing)
+          // Production: 5 attempts per 15 minutes
+          const isDev = process.env.NODE_ENV === 'development';
+          await authApi.register(rateLimit, {
+            max: isDev ? 20 : 5,
+            timeWindow: isDev ? '5 minutes' : '15 minutes',
+            keyGenerator: (request) => {
+              // Rate limit by IP for auth endpoints
+              return request.ip;
+            },
+            errorResponseBuilder: () => ({
+              error: {
+                code: 'AUTH_RATE_LIMIT',
+                message: 'Demasiados intentos de autenticación. Intente en 15 minutos.',
+              },
+            }),
+          });
+
+          await authApi.register(authRoutes);
+        },
+        { prefix: '/auth' }
+      );
+
       // TODO: Register routes in future iterations
-      // api.register(authRoutes, { prefix: '/auth' });
       // api.register(customerRoutes, { prefix: '/clientes' });
       // api.register(adminRoutes, { prefix: '/admin' });
     },
