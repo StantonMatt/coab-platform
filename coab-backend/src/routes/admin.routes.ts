@@ -7,6 +7,7 @@ import {
   paginationSchema,
   customerIdSchema,
 } from '../schemas/admin.schema.js';
+import { paymentSchema } from '../schemas/payment.schema.js';
 
 const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // Apply admin auth middleware to all routes
@@ -193,6 +194,52 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         error: {
           code: 'UNLOCK_FAILED',
           message: 'Error al desbloquear cuenta',
+        },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/pagos
+   * Register a manual payment with FIFO boleta application
+   */
+  fastify.post('/pagos', async (request, reply) => {
+    try {
+      // Validate input with Zod
+      const validatedData = paymentSchema.parse(request.body);
+
+      const result = await adminService.registrarPago(
+        validatedData,
+        request.user!.email!,
+        request.ip,
+        request.headers['user-agent'] || 'unknown',
+        fastify.log
+      );
+
+      return reply.code(201).send(result);
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Datos de pago inválidos',
+            details: error.errors,
+          },
+        });
+      }
+
+      if (error.message === 'Cliente no encontrado') {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: error.message },
+        });
+      }
+
+      fastify.log.error(error, 'Payment registration error');
+
+      return reply.code(500).send({
+        error: {
+          code: 'PAYMENT_ERROR',
+          message: error.message,
         },
       });
     }

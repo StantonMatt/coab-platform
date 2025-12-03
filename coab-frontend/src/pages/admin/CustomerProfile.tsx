@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +21,7 @@ import {
   Calendar,
   AlertTriangle,
 } from 'lucide-react';
+import PaymentModal from '@/components/admin/PaymentModal';
 
 interface Customer {
   id: string;
@@ -77,6 +78,7 @@ export default function CustomerProfilePage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
 
   // Check admin auth
   useEffect(() => {
@@ -333,13 +335,8 @@ export default function CustomerProfilePage() {
               {/* Actions */}
               <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-100">
                 <Button
-                  className="bg-blue-600 hover:bg-blue-700"
-                  onClick={() =>
-                    toast({
-                      title: 'Próximamente',
-                      description: 'Funcionalidad disponible en Iteración 6',
-                    })
-                  }
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  onClick={() => setPaymentModalOpen(true)}
                 >
                   <CreditCard className="h-4 w-4 mr-2" />
                   Registrar Pago
@@ -566,6 +563,17 @@ export default function CustomerProfilePage() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Payment Modal */}
+      <PaymentModal
+        open={paymentModalOpen}
+        onClose={() => setPaymentModalOpen(false)}
+        clienteId={id!}
+        clienteNombre={customer.nombre}
+        clienteRut={customer.rut || ''}
+        clienteDireccion={customer.direccion || undefined}
+        saldoActual={customer.saldo}
+      />
     </div>
   );
 }

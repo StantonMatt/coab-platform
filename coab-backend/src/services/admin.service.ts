@@ -1,5 +1,6 @@
 import prisma from '../lib/prisma.js';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
+import type { PaymentInput } from '../schemas/payment.schema.js';
 
 /**
  * Helper to build full name from parts
@@ -424,4 +425,247 @@ export async function getCustomerById(clienteId: bigint) {
   };
 }
 
+/**
+ * Register a manual payment with FIFO application to boletas
+ * Uses database transaction with row-level locking for concurrent safety
+ *
+ * @param data - Payment input data
+ * @param operadorEmail - Admin email who registered the payment
+ * @param ipAddress - Client IP for audit
+ * @param userAgent - User agent for audit
+ * @param logger - Fastify logger instance
+ */
+export async function registrarPago(
+  data: PaymentInput,
+  operadorEmail: string,
+  ipAddress: string,
+  userAgent: string,
+  logger: { info: (msg: string, data?: object) => void; error: (msg: string, data?: object) => void }
+) {
+  const clienteId = BigInt(data.clienteId);
 
+  try {
+    return await prisma.$transaction(
+      async (tx) => {
+        // 1. Verify customer exists and get basic info
+        const cliente = await tx.clientes.findUnique({
+          where: { id: clienteId },
+          select: {
+            id: true,
+            rut: true,
+            numero_cliente: true,
+            primer_nombre: true,
+            primer_apellido: true,
+          },
+        });
+
+        if (!cliente) {
+          throw new Error('Cliente no encontrado');
+        }
+
+        // Calculate current balance before payment
+        const saldoAnteriorResult = await tx.boletas.aggregate({
+          where: {
+            cliente_id: clienteId,
+            estado: 'pendiente',
+          },
+          _sum: { monto_total: true },
+        });
+        const saldoAnterior = Number(saldoAnteriorResult._sum.monto_total || 0);
+
+        // 2. Create payment record in pagos table
+        const pago = await tx.pagos.create({
+          data: {
+            cliente_id: clienteId,
+            numero_cliente: cliente.numero_cliente,
+            monto: data.monto,
+            fecha_pago: new Date(),
+            tipo_pago: data.tipoPago,
+            estado: 'completado',
+            numero_transaccion: data.numeroTransaccion || null,
+            observaciones: data.observaciones || null,
+            operador: operadorEmail,
+            procesado: true,
+          },
+        });
+
+        // 3. Get pending boletas with row-level lock (FOR UPDATE)
+        // This prevents concurrent payments from applying to same boletas
+        const boletasPendientes = await tx.$queryRaw<
+          Array<{
+            id: bigint;
+            monto_total: string; // Decimal comes as string from raw query
+            fecha_emision: Date;
+            observaciones: string | null;
+          }>
+        >`
+          SELECT id, monto_total, fecha_emision, observaciones
+          FROM boletas
+          WHERE cliente_id = ${clienteId} AND estado = 'pendiente'
+          ORDER BY fecha_emision ASC
+          FOR UPDATE
+        `;
+
+        // 4. Apply payment to boletas (FIFO - oldest first)
+        let montoRestante = data.monto;
+        const boletasAfectadas: Array<{
+          boletaId: string;
+          montoAplicado: number;
+          tipo: 'completo' | 'parcial';
+        }> = [];
+
+        for (const boleta of boletasPendientes) {
+          if (montoRestante <= 0) break;
+
+          const montoBoleta = Number(boleta.monto_total);
+
+          if (montoRestante >= montoBoleta) {
+            // Full payment - mark boleta as paid
+            await tx.boletas.update({
+              where: { id: boleta.id },
+              data: {
+                estado: 'pagada',
+                fecha_actualizacion: new Date(),
+              },
+            });
+
+            boletasAfectadas.push({
+              boletaId: boleta.id.toString(),
+              montoAplicado: montoBoleta,
+              tipo: 'completo',
+            });
+
+            montoRestante -= montoBoleta;
+          } else {
+            // Partial payment - add note to boleta
+            const notaActual = boleta.observaciones || '';
+            const fechaHoy = new Date().toLocaleDateString('es-CL');
+            const nuevaNota =
+              `${notaActual}\n[${fechaHoy}] Pago parcial: $${montoRestante.toLocaleString('es-CL')} - Ref: ${pago.id}`.trim();
+
+            await tx.boletas.update({
+              where: { id: boleta.id },
+              data: {
+                observaciones: nuevaNota,
+                fecha_actualizacion: new Date(),
+              },
+            });
+
+            boletasAfectadas.push({
+              boletaId: boleta.id.toString(),
+              montoAplicado: montoRestante,
+              tipo: 'parcial',
+            });
+
+            montoRestante = 0;
+          }
+        }
+
+        // 5. If money left over (overpayment), note it
+        let observacionesFinal = data.observaciones || '';
+        if (montoRestante > 0) {
+          observacionesFinal =
+            `${observacionesFinal}\n[Saldo a favor: $${montoRestante.toLocaleString('es-CL')}]`.trim();
+
+          await tx.pagos.update({
+            where: { id: pago.id },
+            data: { observaciones: observacionesFinal },
+          });
+        }
+
+        // 6. Calculate new balance
+        const nuevoSaldoResult = await tx.boletas.aggregate({
+          where: {
+            cliente_id: clienteId,
+            estado: 'pendiente',
+          },
+          _sum: { monto_total: true },
+        });
+        const saldoNuevo = Number(nuevoSaldoResult._sum.monto_total || 0);
+
+        // 7. Create audit log entry
+        await tx.log_auditoria.create({
+          data: {
+            accion: 'REGISTRO_PAGO',
+            entidad: 'pagos',
+            entidad_id: pago.id,
+            usuario_tipo: 'admin',
+            usuario_email: operadorEmail,
+            datos_anteriores: {
+              saldoAnterior: saldoAnterior,
+            },
+            datos_nuevos: {
+              pagoId: pago.id.toString(),
+              monto: data.monto,
+              tipoPago: data.tipoPago,
+              boletasAfectadas: boletasAfectadas.length,
+              saldoNuevo: saldoNuevo,
+              saldoAFavor: montoRestante > 0 ? montoRestante : 0,
+            },
+            ip_address: ipAddress,
+            user_agent: userAgent,
+          },
+        });
+
+        logger.info('Payment successfully applied', {
+          clienteId: clienteId.toString(),
+          clienteRut: cliente.rut,
+          monto: data.monto,
+          boletasAfectadas: boletasAfectadas.length,
+          saldoRestante: montoRestante,
+          operador: operadorEmail,
+        });
+
+        // Build customer full name
+        const nombreCliente = `${cliente.primer_nombre} ${cliente.primer_apellido}`;
+
+        return {
+          pago: {
+            id: pago.id.toString(),
+            monto: Number(pago.monto),
+            fechaPago: pago.fecha_pago,
+            tipoPago: pago.tipo_pago,
+            referenciaExterna: pago.numero_transaccion,
+            observaciones: pago.observaciones,
+            operador: pago.operador,
+          },
+          cliente: {
+            id: cliente.id.toString(),
+            rut: cliente.rut,
+            nombre: nombreCliente,
+          },
+          boletasAfectadas,
+          saldoRestante: montoRestante,
+          saldoNuevo,
+        };
+      },
+      {
+        // Transaction options for better isolation
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5000, // 5 seconds max wait
+        timeout: 10000, // 10 seconds timeout
+      }
+    );
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+
+    logger.error('Payment application failed - transaction rolled back', {
+      clienteId: data.clienteId,
+      monto: data.monto,
+      tipoPago: data.tipoPago,
+      operador: operadorEmail,
+      error: errorMessage,
+      stack: errorStack,
+    });
+
+    // Re-throw with user-friendly message
+    if (errorMessage === 'Cliente no encontrado') {
+      throw error;
+    }
+
+    throw new Error(
+      'Error al procesar pago. No se realizaron cambios. Por favor intente nuevamente.'
+    );
+  }
+}
