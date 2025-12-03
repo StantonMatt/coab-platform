@@ -20,6 +20,7 @@ import {
   MapPin,
   Calendar,
   AlertTriangle,
+  Send,
 } from 'lucide-react';
 import PaymentModal from '@/components/admin/PaymentModal';
 
@@ -146,6 +147,53 @@ export default function CustomerProfilePage() {
         description:
           error.response?.data?.error?.message || 'Error al desbloquear cuenta',
       });
+    },
+  });
+
+  // Send setup link mutation
+  const sendSetupMutation = useMutation({
+    mutationFn: async () => {
+      const res = await adminApiClient.post(`/admin/clientes/${id}/enviar-setup`);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      if (data.whatsapp?.success) {
+        toast({
+          title: 'Enlace enviado',
+          description: 'Mensaje de WhatsApp enviado exitosamente',
+        });
+      } else {
+        // WhatsApp failed but URL generated - show copy option
+        toast({
+          title: 'Enlace generado',
+          description: data.whatsapp?.error || 'Copie el enlace para compartir manualmente',
+        });
+        // Copy URL to clipboard
+        navigator.clipboard.writeText(data.setupUrl);
+        toast({
+          title: 'Enlace copiado',
+          description: 'El enlace ha sido copiado al portapapeles',
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['admin-customer', id] });
+    },
+    onError: (error: any) => {
+      const errorData = error.response?.data?.error;
+
+      if (errorData?.code === 'NO_PHONE') {
+        // Customer has no phone - show URL for manual sharing
+        navigator.clipboard.writeText(errorData.setupUrl);
+        toast({
+          title: 'Sin teléfono registrado',
+          description: 'Enlace copiado al portapapeles para compartir manualmente',
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: errorData?.message || 'Error al enviar enlace',
+        });
+      }
     },
   });
 
@@ -341,6 +389,20 @@ export default function CustomerProfilePage() {
                   <CreditCard className="h-4 w-4 mr-2" />
                   Registrar Pago
                 </Button>
+
+                {!customer.tieneContrasena && (
+                  <Button
+                    variant="outline"
+                    className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                    onClick={() => sendSetupMutation.mutate()}
+                    disabled={sendSetupMutation.isPending}
+                  >
+                    <Send className="h-4 w-4 mr-2" />
+                    {sendSetupMutation.isPending
+                      ? 'Enviando...'
+                      : 'Enviar Link Configuración'}
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>

@@ -1,6 +1,8 @@
+import crypto from 'crypto';
 import prisma from '../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 import type { PaymentInput } from '../schemas/payment.schema.js';
+import { env } from '../config/env.js';
 
 /**
  * Helper to build full name from parts
@@ -668,4 +670,101 @@ export async function registrarPago(
       'Error al procesar pago. No se realizaron cambios. Por favor intente nuevamente.'
     );
   }
+}
+
+/**
+ * Generate a password setup token for a customer
+ * Creates a cryptographically secure token with 48-hour expiry
+ *
+ * @param clienteId - Customer ID
+ * @param adminEmail - Admin who generated the token (for audit)
+ * @param ipAddress - IP address of the request
+ */
+export async function generateSetupToken(
+  clienteId: bigint,
+  adminEmail: string,
+  ipAddress: string
+) {
+  // Find customer
+  const cliente = await prisma.clientes.findUnique({
+    where: { id: clienteId },
+    select: {
+      id: true,
+      rut: true,
+      primer_nombre: true,
+      segundo_nombre: true,
+      primer_apellido: true,
+      segundo_apellido: true,
+      telefono: true,
+      hash_contrasena: true,
+    },
+  });
+
+  if (!cliente) {
+    throw new Error('Cliente no encontrado');
+  }
+
+  // Generate cryptographically secure token (256-bit / 32 bytes)
+  const token = crypto.randomBytes(32).toString('hex');
+
+  // Delete any existing unused tokens for this customer
+  await prisma.token_configuracion.deleteMany({
+    where: {
+      cliente_id: clienteId,
+      usado: false,
+    },
+  });
+
+  // Create new token with 48-hour expiry
+  const tokenRecord = await prisma.token_configuracion.create({
+    data: {
+      cliente_id: clienteId,
+      token: token,
+      tipo: 'setup',
+      usado: false,
+      expira_en: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours
+      ip_creacion: ipAddress,
+    },
+  });
+
+  // Build setup URL
+  const setupUrl = `${env.FRONTEND_URL}/setup/${token}`;
+
+  // Build full name
+  const nombreCompleto = buildFullName(
+    cliente.primer_nombre,
+    cliente.segundo_nombre,
+    cliente.primer_apellido,
+    cliente.segundo_apellido
+  );
+
+  // Create audit log
+  await prisma.log_auditoria.create({
+    data: {
+      accion: 'GENERAR_TOKEN_SETUP',
+      entidad: 'token_configuracion',
+      entidad_id: tokenRecord.id,
+      usuario_tipo: 'admin',
+      usuario_email: adminEmail,
+      datos_nuevos: {
+        clienteId: clienteId.toString(),
+        clienteRut: cliente.rut,
+        tokenExpiry: tokenRecord.expira_en.toISOString(),
+      },
+      ip_address: ipAddress,
+    },
+  });
+
+  return {
+    token,
+    setupUrl,
+    cliente: {
+      id: cliente.id.toString(),
+      rut: cliente.rut,
+      nombre: nombreCompleto,
+      telefono: cliente.telefono,
+      tieneContrasena: !!cliente.hash_contrasena,
+    },
+    expiresAt: tokenRecord.expira_en,
+  };
 }

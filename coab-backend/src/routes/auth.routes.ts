@@ -5,6 +5,7 @@ import {
   loginAdminSchema,
   refreshSchema,
 } from '../schemas/auth.schema.js';
+import { setupPasswordSchema } from '../schemas/setup.schema.js';
 import * as authService from '../services/auth.service.js';
 import { AuthError } from '../services/auth.service.js';
 
@@ -218,6 +219,87 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
         error: {
           code: 'LOGOUT_ERROR',
           message: 'Error al cerrar sesión',
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /auth/setup/:token
+   * Validate setup token and return customer info (public endpoint)
+   */
+  fastify.get('/setup/:token', async (request, reply) => {
+    try {
+      const { token } = request.params as { token: string };
+
+      const result = await authService.validateSetupToken(token);
+
+      if (!result.valid) {
+        return reply.code(404).send({
+          error: {
+            code: 'INVALID_TOKEN',
+            message: 'Enlace inválido o expirado',
+          },
+        });
+      }
+
+      return result;
+    } catch (error) {
+      fastify.log.error(error, 'Error al validar token de setup');
+      return reply.code(500).send({
+        error: {
+          code: 'SERVER_ERROR',
+          message: 'Error al validar enlace',
+        },
+      });
+    }
+  });
+
+  /**
+   * POST /auth/setup
+   * Set password using setup token (public endpoint)
+   */
+  fastify.post('/setup', async (request, reply) => {
+    try {
+      const body = setupPasswordSchema.parse(request.body);
+
+      const result = await authService.setupPassword(
+        body.token,
+        body.password,
+        request.ip
+      );
+
+      fastify.log.info(
+        { ip: request.ip },
+        'Contraseña configurada exitosamente'
+      );
+
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: error.errors[0].message,
+            details: error.errors,
+          },
+        });
+      }
+
+      if (error.message === 'Token inválido o expirado') {
+        return reply.code(400).send({
+          error: {
+            code: 'INVALID_TOKEN',
+            message: error.message,
+          },
+        });
+      }
+
+      fastify.log.error(error, 'Error al configurar contraseña');
+      return reply.code(500).send({
+        error: {
+          code: 'SETUP_ERROR',
+          message: 'Error al configurar contraseña',
         },
       });
     }

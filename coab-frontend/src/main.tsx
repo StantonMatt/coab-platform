@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/toaster';
 import LoginPage from './pages/Login';
 import DashboardPage from './pages/Dashboard';
 import BoletaDetailPage from './pages/BoletaDetail';
+import SetupPage from './pages/Setup';
 import AdminLoginPage from './pages/admin/Login';
 import AdminDashboardPage from './pages/admin/Dashboard';
 import AdminCustomersPage from './pages/admin/Customers';
@@ -32,6 +33,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/login" element={<LoginPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/boletas/:id" element={<BoletaDetailPage />} />
+          <Route path="/setup/:token" element={<SetupPage />} />
           <Route path="/" element={<Navigate to="/login" replace />} />
           
           {/* Admin Portal */}

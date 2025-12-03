@@ -461,3 +461,124 @@ export async function refreshAdminToken(
   };
 }
 
+/**
+ * Validate a setup token (for showing the setup form)
+ * Returns customer info if valid, or { valid: false } if invalid/expired
+ */
+export async function validateSetupToken(token: string) {
+  const tokenRecord = await prisma.token_configuracion.findFirst({
+    where: {
+      token: token,
+      tipo: 'setup',
+      usado: false,
+      expira_en: { gt: new Date() },
+    },
+    include: {
+      cliente: {
+        select: {
+          rut: true,
+          primer_nombre: true,
+          segundo_nombre: true,
+          primer_apellido: true,
+          segundo_apellido: true,
+        },
+      },
+    },
+  });
+
+  if (!tokenRecord || !tokenRecord.cliente) {
+    return { valid: false };
+  }
+
+  // Build full name
+  const nombreCompleto = [
+    tokenRecord.cliente.primer_nombre,
+    tokenRecord.cliente.segundo_nombre,
+    tokenRecord.cliente.primer_apellido,
+    tokenRecord.cliente.segundo_apellido,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return {
+    valid: true,
+    cliente: {
+      rut: tokenRecord.cliente.rut,
+      nombre: nombreCompleto,
+    },
+  };
+}
+
+/**
+ * Setup customer password using setup token
+ * Hashes password, marks token as used, creates audit log
+ */
+export async function setupPassword(
+  token: string,
+  password: string,
+  ipAddress: string
+) {
+  // Find valid token
+  const tokenRecord = await prisma.token_configuracion.findFirst({
+    where: {
+      token: token,
+      tipo: 'setup',
+      usado: false,
+      expira_en: { gt: new Date() },
+    },
+    include: {
+      cliente: true,
+    },
+  });
+
+  if (!tokenRecord || !tokenRecord.cliente) {
+    throw new Error('Token inválido o expirado');
+  }
+
+  // Hash password with Argon2id
+  const hashContrasena = await hash(password, {
+    memoryCost: 65536, // 64 MB
+    timeCost: 3,
+    parallelism: 4,
+  });
+
+  // Update customer with password and mark token as used in a transaction
+  await prisma.$transaction([
+    prisma.clientes.update({
+      where: { id: tokenRecord.cliente_id },
+      data: {
+        hash_contrasena: hashContrasena,
+        estado_cuenta: 'activa',
+      },
+    }),
+    prisma.token_configuracion.update({
+      where: { id: tokenRecord.id },
+      data: {
+        usado: true,
+        usado_en: new Date(),
+        ip_uso: ipAddress,
+      },
+    }),
+  ]);
+
+  // Create audit log
+  await prisma.log_auditoria.create({
+    data: {
+      accion: 'CONFIGURAR_CONTRASENA',
+      entidad: 'clientes',
+      entidad_id: tokenRecord.cliente_id,
+      usuario_tipo: 'cliente',
+      datos_nuevos: {
+        setup_completado: true,
+      },
+      ip_address: ipAddress,
+    },
+  });
+
+  return {
+    success: true,
+    message: 'Contraseña configurada exitosamente',
+    rut: tokenRecord.cliente.rut,
+  };
+}
+

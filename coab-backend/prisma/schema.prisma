@@ -461,14 +461,17 @@ model planillas_procesadas {
 
 /// Token for password setup/reset links (Iteration 7 & 7.5)
 model token_configuracion {
-  id         BigInt   @id @default(autoincrement())
-  cliente_id BigInt
-  token      String   @unique
-  tipo       String   @default("setup") // setup, reset
-  usado      Boolean  @default(false)
-  expira_en  DateTime @db.Timestamptz(6)
-  creado_en  DateTime @default(now()) @db.Timestamptz(6)
-  cliente    clientes @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  id          BigInt    @id @default(autoincrement())
+  cliente_id  BigInt
+  token       String    @unique
+  tipo        String    @default("setup") // setup, reset
+  usado       Boolean   @default(false)
+  expira_en   DateTime  @db.Timestamptz(6)
+  creado_en   DateTime  @default(now()) @db.Timestamptz(6)
+  ip_creacion String?
+  usado_en    DateTime? @db.Timestamptz(6)
+  ip_uso      String?
+  cliente     clientes  @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
 
   @@index([token], map: "idx_token_config_token")
   @@index([cliente_id], map: "idx_token_config_cliente")

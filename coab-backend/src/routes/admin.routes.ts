@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { ZodError } from 'zod';
 import * as adminService from '../services/admin.service.js';
+import * as infobipService from '../services/infobip.service.js';
 import { requireAdmin } from '../middleware/auth.middleware.js';
 import {
   searchSchema,
@@ -198,6 +199,159 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   });
+
+  /**
+   * POST /admin/clientes/:id/generar-setup
+   * Generate a password setup token for a customer
+   * Rate limited: 3 per customer per hour
+   */
+  fastify.post(
+    '/clientes/:id/generar-setup',
+    {
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: '1 hour',
+          keyGenerator: (req: any) => `setup-${(req.params as any).id}`,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const params = customerIdSchema.parse(request.params);
+
+        const result = await adminService.generateSetupToken(
+          BigInt(params.id),
+          request.user!.email!,
+          request.ip
+        );
+
+        fastify.log.info(
+          { clienteId: params.id, adminEmail: request.user!.email },
+          'Token de configuración generado'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: error.errors[0].message,
+            },
+          });
+        }
+
+        if (error.message === 'Cliente no encontrado') {
+          return reply.code(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: error.message,
+            },
+          });
+        }
+
+        fastify.log.error(error, 'Error al generar token de configuración');
+        return reply.code(500).send({
+          error: {
+            code: 'TOKEN_GENERATION_FAILED',
+            message: 'Error al generar enlace de configuración',
+          },
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /admin/clientes/:id/enviar-setup
+   * Generate a password setup token AND send via WhatsApp
+   * Rate limited: 3 per customer per hour
+   */
+  fastify.post(
+    '/clientes/:id/enviar-setup',
+    {
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: '1 hour',
+          keyGenerator: (req: any) => `enviar-setup-${(req.params as any).id}`,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const params = customerIdSchema.parse(request.params);
+        const clienteId = BigInt(params.id);
+
+        // 1. Generate setup token
+        const tokenResult = await adminService.generateSetupToken(
+          clienteId,
+          request.user!.email!,
+          request.ip
+        );
+
+        // 2. Check if customer has phone number
+        if (!tokenResult.cliente.telefono) {
+          return reply.code(400).send({
+            error: {
+              code: 'NO_PHONE',
+              message: 'Cliente no tiene teléfono registrado',
+              setupUrl: tokenResult.setupUrl, // Still return URL for manual sharing
+            },
+          });
+        }
+
+        // 3. Send via WhatsApp
+        const whatsappResult = await infobipService.sendSetupLinkViaWhatsApp(
+          clienteId,
+          tokenResult.setupUrl,
+          tokenResult.cliente.nombre,
+          tokenResult.cliente.telefono,
+          fastify.log
+        );
+
+        fastify.log.info(
+          {
+            clienteId: params.id,
+            adminEmail: request.user!.email,
+            whatsappSuccess: whatsappResult.success,
+          },
+          'Enlace de configuración enviado'
+        );
+
+        return {
+          ...tokenResult,
+          whatsapp: whatsappResult,
+        };
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: error.errors[0].message,
+            },
+          });
+        }
+
+        if (error.message === 'Cliente no encontrado') {
+          return reply.code(404).send({
+            error: {
+              code: 'NOT_FOUND',
+              message: error.message,
+            },
+          });
+        }
+
+        fastify.log.error(error, 'Error al enviar enlace de configuración');
+        return reply.code(500).send({
+          error: {
+            code: 'SEND_SETUP_FAILED',
+            message: 'Error al enviar enlace de configuración',
+          },
+        });
+      }
+    }
+  );
 
   /**
    * POST /admin/pagos
