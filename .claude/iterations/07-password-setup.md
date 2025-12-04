@@ -1003,30 +1003,3 @@ If Infobip verification is still pending, admin can:
 1. Click "Enviar Link Configuración"
 2. Get setup URL in response
 3. Manually copy/paste URL and send via personal WhatsApp
-
-**Commit Message:**
-```
-feat: password setup via WhatsApp link with rate limiting
-
-Backend (Fastify + Infobip + libphonenumber-js):
-- POST /admin/clientes/:id/generar-setup (generate token)
-- POST /admin/clientes/:id/enviar-setup (generate + WhatsApp)
-- GET /auth/setup/:token (validate token)
-- POST /auth/setup (set password)
-- Cryptographically secure tokens (256-bit)
-- 48-hour token expiry with single-use
-- Infobip WhatsApp API integration
-- Phone validation with libphonenumber-js
-- Rate limiting: 3 requests per customer per hour
-- Argon2id password hashing
-- Audit trail for token generation and password setup
-
-Frontend (Vite + React Router):
-- Admin "Send Setup Link" button with copy fallback
-- Password setup page with mobile-first design
-- Real-time password requirement indicators
-- Token validation and error states
-- Redirect to login with RUT pre-filled
-
-🚀 Generated with Claude Code
-```

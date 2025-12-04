@@ -785,32 +785,3 @@ DATABASE_URL="postgresql://..."
 2. Check Sentry for new errors
 3. Review Railway logs for anomalies
 4. Run balance reconciliation weekly
-
-**Commit Message:**
-```
-chore: production deployment with monitoring and CI/CD
-
-Deployment:
-- Railway backend deployment with health checks
-- Cloudflare Pages frontend deployment
-- Custom domain configuration
-- Environment variables secured
-
-Monitoring:
-- Sentry error tracking (backend + frontend)
-- UptimeRobot health monitoring (5-min intervals)
-- Cold start prevention via cron-job.org
-- Error Boundary for frontend crashes
-
-CI/CD:
-- GitHub Actions pipeline for linting, type-check, build
-- Auto-deploy to Railway/Cloudflare on main branch
-- Staging environment support
-
-Operations:
-- Daily balance reconciliation script (optimized single query)
-- Manual backup script with restore verification
-- Security audit checklist completed
-
-🚀 COAB Platform is now live!
-```

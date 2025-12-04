@@ -847,31 +847,3 @@ export default apiClient;
 
 **Next Iteration:**
 Iteration 3 will add the complete customer dashboard with real data (boletas, payment history, balance details).
-
-**Commit Message:**
-```
-feat: customer authentication with RUT login and auto-refresh
-
-Backend (Fastify):
-- POST /api/v1/auth/login endpoint
-- POST /api/v1/auth/refresh endpoint (token rotation)
-- POST /api/v1/auth/logout endpoint
-- RUT validation with Modulus 11 (Zod v4)
-- Argon2id password hashing (not bcrypt)
-- JWT generation with jose library
-- Account lockout after 5 failed attempts (15 min)
-- Refresh token rotation for security
-- Pino logging for auth events
-
-Frontend (Vite + React Router):
-- Login page with RUT auto-formatting
-- React Hook Form + Zod v4 validation
-- Numeric keyboard on mobile (inputMode)
-- Protected dashboard route
-- Automatic token refresh on 401 (race condition fixed)
-- Token storage in localStorage
-- Chilean peso formatting ($1.234.567)
-- "Forgot password" link for Iteration 7.5
-
-🚀 Generated with Claude Code
-```

@@ -19,3 +19,4 @@ export const boletaIdSchema = z.object({
 export type PaginationQuery = z.infer<typeof paginationSchema>;
 export type BoletaIdParams = z.infer<typeof boletaIdSchema>;
 
+

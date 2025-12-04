@@ -1208,30 +1208,3 @@ SELECT email, rol, activo FROM administradores;
 
 **Next Iteration:**
 Iteration 2 will add customer authentication (RUT + password login) with JWT refresh tokens.
-
-**Commit Message:**
-```
-feat: initial project setup with complete schema and data migration
-
-Backend:
-- Fastify v5 with Pino logging
-- Prisma v6 connected to Supabase (connection pooling)
-- Health check endpoint for Railway
-- Complete Spanish-named database schema
-- All tables for iterations 1-8 defined upfront
-- Trigram indexes for efficient text search
-
-Frontend:
-- Vite v7 + React 18 + TypeScript
-- Tailwind CSS v4 with Chilean theme colors
-- Axios API client with interceptors
-- shadcn/ui components initialized
-
-Data:
-- 355 existing customers migrated from CSV
-- Admin user created with Argon2id password
-- Data integrity verification passed
-- All customers pending password setup (Iteration 7)
-
-🚀 Generated with Claude Code
-```
