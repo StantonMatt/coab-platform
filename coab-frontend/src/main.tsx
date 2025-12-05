@@ -7,6 +7,7 @@ import LoginPage from './pages/Login';
 import DashboardPage from './pages/Dashboard';
 import BoletaDetailPage from './pages/BoletaDetail';
 import SetupPage from './pages/Setup';
+import RecuperarPage from './pages/Recuperar';
 import AdminLoginPage from './pages/admin/Login';
 import AdminDashboardPage from './pages/admin/Dashboard';
 import AdminCustomersPage from './pages/admin/Customers';
@@ -31,6 +32,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Routes>
           {/* Customer Portal */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/recuperar" element={<RecuperarPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/boletas/:id" element={<BoletaDetailPage />} />
           <Route path="/setup/:token" element={<SetupPage />} />

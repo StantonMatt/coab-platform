@@ -7,6 +7,7 @@ import {
   generateRefreshToken,
   hashRefreshToken,
 } from '../utils/jwt.js';
+import { sendWhatsAppMessage } from './infobip.service.js';
 
 /**
  * Auth errors with specific codes
@@ -579,6 +580,288 @@ export async function setupPassword(
     success: true,
     message: 'Contraseña configurada exitosamente',
     rut: tokenRecord.cliente.rut,
+  };
+}
+
+/**
+ * Helper function for consistent timing (prevents timing attacks)
+ */
+async function waitUntil(startTime: number, minimumMs: number) {
+  const elapsed = Date.now() - startTime;
+  if (elapsed < minimumMs) {
+    await new Promise((resolve) => setTimeout(resolve, minimumMs - elapsed));
+  }
+}
+
+/**
+ * Request password reset - generates 6-digit code sent via WhatsApp
+ * Returns generic success to prevent RUT enumeration
+ */
+export async function solicitarReset(
+  rut: string,
+  ipAddress: string,
+  logger: { info: (msg: string, data?: object) => void; warn: (msg: string, data?: object) => void; error: (msg: string, data?: object) => void }
+) {
+  const rutLimpio = limpiarRUT(rut);
+
+  // Start timing for consistent response time (timing attack mitigation)
+  const startTime = Date.now();
+  const MINIMUM_RESPONSE_TIME = 1500; // 1.5 seconds minimum
+
+  try {
+    const cliente = await prisma.clientes.findUnique({
+      where: { rut: rutLimpio },
+      select: {
+        id: true,
+        rut: true,
+        primer_nombre: true,
+        telefono: true,
+        hash_contrasena: true,
+      },
+    });
+
+    // SECURITY: Don't reveal if RUT exists - consistent response
+    if (!cliente || !cliente.telefono || !cliente.hash_contrasena) {
+      // Wait to match normal processing time (timing attack mitigation)
+      await waitUntil(startTime, MINIMUM_RESPONSE_TIME);
+
+      logger.info('Password reset requested for non-existent/invalid customer', {
+        rutPartial: rutLimpio.slice(0, 4) + '****',
+        reason: !cliente
+          ? 'not_found'
+          : !cliente.telefono
+            ? 'no_phone'
+            : 'no_password',
+      });
+
+      // Return generic success to prevent RUT enumeration
+      return {
+        success: true,
+        message:
+          'Si el RUT existe y tiene teléfono registrado, recibirás un código por WhatsApp',
+      };
+    }
+
+    // Delete any existing unused reset tokens for this customer
+    await prisma.token_configuracion.deleteMany({
+      where: {
+        cliente_id: cliente.id,
+        tipo: 'reset',
+        usado: false,
+      },
+    });
+
+    // Generate 6-digit code
+    const codigo = String(Math.floor(100000 + Math.random() * 900000));
+
+    // Create reset token (15 minute expiry)
+    const tokenRecord = await prisma.token_configuracion.create({
+      data: {
+        cliente_id: cliente.id,
+        token: codigo,
+        tipo: 'reset',
+        usado: false,
+        expira_en: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+        ip_creacion: ipAddress,
+      },
+    });
+
+    // Send WhatsApp message
+    const mensaje = `COAB - Código de recuperación
+
+Tu código es: ${codigo}
+
+Este código expira en 15 minutos.
+
+Si no solicitaste este código, ignora este mensaje.`;
+
+    const whatsappResult = await sendWhatsAppMessage(cliente.telefono, mensaje);
+
+    if (!whatsappResult.success) {
+      logger.warn('Failed to send WhatsApp reset code', {
+        clienteId: cliente.id.toString(),
+        error: whatsappResult.error,
+      });
+    }
+
+    // Audit log
+    await prisma.log_auditoria.create({
+      data: {
+        accion: 'SOLICITAR_RESET',
+        entidad: 'clientes',
+        entidad_id: cliente.id,
+        usuario_tipo: 'cliente',
+        datos_nuevos: {
+          tokenExpiry: tokenRecord.expira_en.toISOString(),
+          whatsappSent: whatsappResult.success,
+        },
+        ip_address: ipAddress,
+      },
+    });
+
+    logger.info('Password reset code sent', {
+      clienteId: cliente.id.toString(),
+      rutPartial: rutLimpio.slice(0, 4) + '****',
+      whatsappSuccess: whatsappResult.success,
+    });
+
+    // Wait to match minimum response time
+    await waitUntil(startTime, MINIMUM_RESPONSE_TIME);
+
+    return {
+      success: true,
+      message:
+        'Si el RUT existe y tiene teléfono registrado, recibirás un código por WhatsApp',
+    };
+  } catch (error: any) {
+    logger.error('Password reset request failed', {
+      rutPartial: rutLimpio.slice(0, 4) + '****',
+      error: error.message,
+    });
+
+    // Wait to match minimum response time
+    await waitUntil(startTime, MINIMUM_RESPONSE_TIME);
+
+    throw error;
+  }
+}
+
+/**
+ * Validate reset code and set new password
+ * Includes brute force protection
+ */
+export async function validarCodigoReset(
+  rut: string,
+  codigo: string,
+  nuevaContrasena: string,
+  ipAddress: string,
+  logger: { info: (msg: string, data?: object) => void; warn: (msg: string, data?: object) => void }
+) {
+  const rutLimpio = limpiarRUT(rut);
+
+  const cliente = await prisma.clientes.findUnique({
+    where: { rut: rutLimpio },
+    select: { id: true, rut: true },
+  });
+
+  if (!cliente) {
+    throw new Error('Código inválido o expirado');
+  }
+
+  // Find valid reset token
+  const tokenRecord = await prisma.token_configuracion.findFirst({
+    where: {
+      cliente_id: cliente.id,
+      token: codigo,
+      tipo: 'reset',
+      usado: false,
+      expira_en: { gt: new Date() },
+    },
+  });
+
+  if (!tokenRecord) {
+    // Track failed attempt in audit log
+    await prisma.log_auditoria.create({
+      data: {
+        accion: 'RESET_CODIGO_INVALIDO',
+        entidad: 'clientes',
+        entidad_id: cliente.id,
+        usuario_tipo: 'cliente',
+        datos_nuevos: {
+          codigoIntentado: codigo.slice(0, 2) + '****',
+        },
+        ip_address: ipAddress,
+      },
+    });
+
+    logger.warn('Invalid reset code attempt', {
+      clienteId: cliente.id.toString(),
+      rutPartial: rutLimpio.slice(0, 4) + '****',
+    });
+
+    throw new Error('Código inválido o expirado');
+  }
+
+  // Check for brute force (max 5 attempts per token window - last 15 minutes)
+  const recentFailedAttempts = await prisma.log_auditoria.count({
+    where: {
+      accion: 'RESET_CODIGO_INVALIDO',
+      entidad_id: cliente.id,
+      creado_en: {
+        gte: new Date(Date.now() - 15 * 60 * 1000), // Last 15 minutes
+      },
+    },
+  });
+
+  if (recentFailedAttempts >= 5) {
+    // Invalidate the token
+    await prisma.token_configuracion.update({
+      where: { id: tokenRecord.id },
+      data: { usado: true },
+    });
+
+    logger.warn('Reset token locked due to too many failed attempts', {
+      clienteId: cliente.id.toString(),
+    });
+
+    throw new Error('Demasiados intentos fallidos. Solicita un nuevo código.');
+  }
+
+  // Code is valid - hash new password with Argon2id
+  const hashContrasena = await hash(nuevaContrasena, {
+    memoryCost: 65536, // 64 MB
+    timeCost: 3,
+    parallelism: 4,
+  });
+
+  // Update password and mark token as used in a transaction
+  await prisma.$transaction([
+    prisma.clientes.update({
+      where: { id: cliente.id },
+      data: {
+        hash_contrasena: hashContrasena,
+        intentos_fallidos: 0, // Reset failed login attempts
+        bloqueado_hasta: null, // Unlock account if locked
+      },
+    }),
+    prisma.token_configuracion.update({
+      where: { id: tokenRecord.id },
+      data: {
+        usado: true,
+        usado_en: new Date(),
+        ip_uso: ipAddress,
+      },
+    }),
+  ]);
+
+  // Audit log for successful reset
+  await prisma.log_auditoria.create({
+    data: {
+      accion: 'RESET_CONTRASENA_EXITOSO',
+      entidad: 'clientes',
+      entidad_id: cliente.id,
+      usuario_tipo: 'cliente',
+      datos_nuevos: {
+        reset_completado: true,
+      },
+      ip_address: ipAddress,
+    },
+  });
+
+  // Invalidate all existing refresh sessions for security
+  await prisma.sesion_refresh.deleteMany({
+    where: { usuario_id: cliente.id.toString() },
+  });
+
+  logger.info('Password reset completed successfully', {
+    clienteId: cliente.id.toString(),
+    rutPartial: rutLimpio.slice(0, 4) + '****',
+  });
+
+  return {
+    success: true,
+    message: 'Contraseña actualizada exitosamente',
+    rut: cliente.rut,
   };
 }
 
