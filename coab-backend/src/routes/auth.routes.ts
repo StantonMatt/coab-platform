@@ -8,6 +8,10 @@ import {
 import { setupPasswordSchema, passwordSchema } from '../schemas/setup.schema.js';
 import * as authService from '../services/auth.service.js';
 import { AuthError } from '../services/auth.service.js';
+import { env } from '../config/env.js';
+
+// In development mode, use very high rate limits for testing
+const isDev = env.NODE_ENV === 'development';
 
 const authRoutes: FastifyPluginAsync = async (fastify) => {
   /**
@@ -315,8 +319,8 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
     {
       config: {
         rateLimit: {
-          max: 3,
-          timeWindow: '15 minutes',
+          max: isDev ? 100 : 3,
+          timeWindow: isDev ? '5 minutes' : '15 minutes',
           keyGenerator: (req) => {
             // Rate limit by RUT to prevent spam
             const body = req.body as { rut?: string };
@@ -373,8 +377,8 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
     {
       config: {
         rateLimit: {
-          max: 10,
-          timeWindow: '15 minutes',
+          max: isDev ? 100 : 10,
+          timeWindow: isDev ? '5 minutes' : '15 minutes',
           keyGenerator: (req) => {
             const body = req.body as { rut?: string };
             const rutLimpio = (body?.rut || '')

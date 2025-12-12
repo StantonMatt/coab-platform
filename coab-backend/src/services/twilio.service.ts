@@ -11,13 +11,11 @@ interface WhatsAppResult {
   error?: string;
 }
 
-interface InfobipResponse {
-  messages?: Array<{ messageId: string }>;
-  requestError?: {
-    serviceException?: {
-      text?: string;
-    };
-  };
+interface TwilioResponse {
+  sid?: string;
+  status?: string;
+  error_code?: number;
+  error_message?: string;
 }
 
 /**
@@ -51,18 +49,18 @@ export function formatChileanPhone(phone: string): string | null {
 }
 
 /**
- * Send WhatsApp message via Infobip
+ * Send WhatsApp message via Twilio
  */
 export async function sendWhatsAppMessage(
   phone: string,
   message: string
 ): Promise<WhatsAppResult> {
-  const INFOBIP_API_KEY = env.INFOBIP_API_KEY;
-  const INFOBIP_BASE_URL = env.INFOBIP_BASE_URL || 'https://api.infobip.com';
-  const INFOBIP_WHATSAPP_SENDER = env.INFOBIP_WHATSAPP_SENDER;
+  const TWILIO_ACCOUNT_SID = env.TWILIO_ACCOUNT_SID;
+  const TWILIO_AUTH_TOKEN = env.TWILIO_AUTH_TOKEN;
+  const TWILIO_WHATSAPP_FROM = env.TWILIO_WHATSAPP_FROM;
 
-  if (!INFOBIP_API_KEY || !INFOBIP_WHATSAPP_SENDER) {
-    console.warn('Infobip not configured - message not sent');
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_WHATSAPP_FROM) {
+    console.warn('Twilio not configured - message not sent');
     return {
       success: false,
       error: 'WhatsApp no configurado',
@@ -78,34 +76,45 @@ export async function sendWhatsAppMessage(
   }
 
   try {
-    const response = await fetch(`${INFOBIP_BASE_URL}/whatsapp/1/message/text`, {
-      method: 'POST',
-      headers: {
-        Authorization: `App ${INFOBIP_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: INFOBIP_WHATSAPP_SENDER,
-        to: formattedPhone,
-        content: {
-          text: message,
+    // Twilio uses Basic Auth with AccountSID:AuthToken
+    const authHeader = Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64');
+
+    // Twilio WhatsApp requires the "whatsapp:" prefix
+    const toWhatsApp = `whatsapp:${formattedPhone}`;
+
+    console.log(`Twilio: Sending to ${toWhatsApp} from ${TWILIO_WHATSAPP_FROM}`);
+    
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${authHeader}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
         },
-      }),
-    });
+        body: new URLSearchParams({
+          From: TWILIO_WHATSAPP_FROM,
+          To: toWhatsApp,
+          Body: message,
+        }),
+      }
+    );
 
-    const data = (await response.json()) as InfobipResponse;
+    const data = (await response.json()) as TwilioResponse;
+    console.log('Twilio response:', JSON.stringify(data, null, 2));
 
-    if (response.ok && data.messages?.[0]) {
+    if (response.ok && data.sid) {
       return {
         success: true,
-        messageId: data.messages[0].messageId,
+        messageId: data.sid,
       };
     }
 
+    const errorMsg = data.error_message || `Error ${data.error_code || response.status}`;
+    console.error('Twilio error:', errorMsg);
     return {
       success: false,
-      error:
-        data.requestError?.serviceException?.text || 'Error sending WhatsApp',
+      error: errorMsg,
     };
   } catch (error: any) {
     return {

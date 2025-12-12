@@ -17,10 +17,10 @@ const envSchema = z.object({
   // Authentication
   JWT_SECRET: z.string().min(32, 'JWT_SECRET debe tener al menos 32 caracteres'),
 
-  // Optional: Infobip WhatsApp
-  INFOBIP_API_KEY: z.string().optional(),
-  INFOBIP_BASE_URL: z.string().url().optional(),
-  INFOBIP_WHATSAPP_SENDER: z.string().optional(),
+  // Optional: Twilio WhatsApp
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_WHATSAPP_FROM: z.string().optional(),
 
   // Optional: Sentry
   SENTRY_DSN: z.string().url().optional(),

@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { ZodError } from 'zod';
 import * as adminService from '../services/admin.service.js';
-import * as infobipService from '../services/infobip.service.js';
+import * as twilioService from '../services/twilio.service.js';
 import { requireAdmin } from '../middleware/auth.middleware.js';
 import {
   searchSchema,
@@ -302,7 +302,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         // 3. Send via WhatsApp
-        const whatsappResult = await infobipService.sendSetupLinkViaWhatsApp(
+        const whatsappResult = await twilioService.sendSetupLinkViaWhatsApp(
           clienteId,
           tokenResult.setupUrl,
           tokenResult.cliente.nombre,

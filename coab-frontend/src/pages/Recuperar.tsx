@@ -98,6 +98,7 @@ export default function RecuperarPage() {
         description:
           'Si tu RUT está registrado, recibirás un código por WhatsApp',
       });
+      resetForm.reset(); // Clear any stale state
       setStep('verify');
     },
     onError: (error: any) => {
@@ -175,9 +176,13 @@ export default function RecuperarPage() {
               Tu contraseña ha sido cambiada exitosamente.
             </p>
             <Button
-              onClick={() =>
-                navigate(`/login?rut=${encodeURIComponent(formatearRUT(rut))}`)
-              }
+              onClick={() => {
+                // Clear any existing tokens to ensure fresh login
+                localStorage.removeItem('access_token');
+                localStorage.removeItem('refresh_token');
+                localStorage.removeItem('user');
+                navigate(`/login?rut=${encodeURIComponent(formatearRUT(rut))}`);
+              }}
               className="w-full h-12 bg-blue-600 hover:bg-blue-700"
             >
               Ir a Iniciar Sesión
@@ -192,7 +197,7 @@ export default function RecuperarPage() {
   if (step === 'verify') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-        <Card className="w-full max-w-md border-slate-200 shadow-sm">
+        <Card key="verify-card" className="w-full max-w-md border-slate-200 shadow-sm">
           <CardHeader className="text-center pb-4">
             <CardTitle className="text-xl font-bold text-slate-900">
               Verificar Código
@@ -211,11 +216,13 @@ export default function RecuperarPage() {
                   Código de Verificación
                 </Label>
                 <Input
+                  key="codigo-input"
                   id="codigo"
                   type="text"
                   inputMode="numeric"
                   maxLength={6}
                   placeholder="123456"
+                  autoComplete="one-time-code"
                   {...resetForm.register('codigo')}
                   className={`h-14 text-center text-2xl tracking-widest font-mono mt-1 ${
                     resetForm.formState.errors.codigo
@@ -354,7 +361,7 @@ export default function RecuperarPage() {
   // Step 1: Request Code
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-      <Card className="w-full max-w-md border-slate-200 shadow-sm">
+      <Card key="request-card" className="w-full max-w-md border-slate-200 shadow-sm">
         <CardHeader className="text-center pb-4">
           <div className="mb-2">
             <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto">

@@ -7,7 +7,7 @@ import {
   generateRefreshToken,
   hashRefreshToken,
 } from '../utils/jwt.js';
-import { sendWhatsAppMessage } from './infobip.service.js';
+import { sendWhatsAppMessage } from './twilio.service.js';
 
 /**
  * Auth errors with specific codes
