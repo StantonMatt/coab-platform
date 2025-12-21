@@ -41,6 +41,7 @@ model clientes {
   saldos_iniciales     saldos_iniciales?
   subsidio_historial   subsidio_historial[]
   tokens_configuracion token_configuracion[]
+  transacciones_online transacciones_online[]
 
   @@index([primer_apellido, segundo_apellido], map: "idx_clientes_apellidos")
   @@index([numero_cliente, es_cliente_actual], map: "idx_clientes_numero_actual")
@@ -113,21 +114,21 @@ model boletas {
 }
 
 model pagos {
-  id                     BigInt    @id @default(autoincrement())
+  id                     BigInt                 @id @default(autoincrement())
   numero_cliente         String?
   cliente_id             BigInt?
-  monto                  Decimal   @db.Decimal
-  fecha_pago             DateTime  @default(now()) @db.Date
+  monto                  Decimal                @db.Decimal
+  fecha_pago             DateTime               @default(now()) @db.Date
   tipo_pago              String
   numero_transaccion     String?
-  estado                 String    @default("completado")
+  estado                 String                 @default("completado")
   estado_detalle         String?
   comprobante_url        String?
   operador               String?
   observaciones          String?
-  fecha_creacion         DateTime  @default(now()) @db.Timestamptz(6)
-  fecha_actualizacion    DateTime  @default(now()) @db.Timestamptz(6)
-  procesado              Boolean   @default(false)
+  fecha_creacion         DateTime               @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion    DateTime               @default(now()) @db.Timestamptz(6)
+  procesado              Boolean                @default(false)
   ai_confidence          String?
   direccion_cliente      String?
   folio_boleta           String?
@@ -140,13 +141,39 @@ model pagos {
   correo_remitente       String?
   es_remitente_confiable Boolean?
   metodo_importacion     String?
-  cliente                clientes? @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cliente                clientes?              @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  transacciones_online   transacciones_online[]
 
   @@unique([numero_cliente, monto, identificador_origen, numero_transaccion])
   @@index([estado], map: "idx_pagos_estado")
   @@index([fecha_pago], map: "idx_pagos_fecha")
   @@index([numero_cliente], map: "idx_pagos_numero_cliente")
   @@index([procesado, estado], map: "idx_pagos_procesado_estado")
+}
+
+/// Online payment transactions (Mercado Pago, Transbank, etc.)
+model transacciones_online {
+  id                 BigInt    @id @default(autoincrement())
+  cliente_id         BigInt
+  proveedor          String    @db.VarChar(50) // mercadopago, transbank
+  referencia_externa String    @db.VarChar(255) // External payment ID from provider
+  monto              Decimal   @db.Decimal(12, 2)
+  estado             String    @db.VarChar(50) // pending, approved, rejected, refunded, cancelled
+  estado_detalle     String?   @db.VarChar(255)
+  metodo_pago        String?   @db.VarChar(100) // visa, mastercard, etc.
+  cuotas             Int       @default(1)
+  datos_respuesta    Json?     @db.JsonB // Full response from payment provider
+  pago_id            BigInt? // Links to pagos record after successful payment
+  clave_idempotencia String?   @unique @db.VarChar(255) // Idempotency key
+  creado_en          DateTime  @default(now()) @db.Timestamptz(6)
+  actualizado_en     DateTime  @default(now()) @db.Timestamptz(6)
+  cliente            clientes  @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  pago               pagos?    @relation(fields: [pago_id], references: [id], onDelete: SetNull)
+
+  @@index([cliente_id], map: "idx_transacciones_online_cliente")
+  @@index([referencia_externa], map: "idx_transacciones_online_ref")
+  @@index([estado], map: "idx_transacciones_online_estado")
+  @@index([creado_en], map: "idx_transacciones_online_fecha")
 }
 
 model direcciones {

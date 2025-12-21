@@ -3,6 +3,11 @@ import prisma from '../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 import type { PaymentInput } from '../schemas/payment.schema.js';
 import { env } from '../config/env.js';
+import {
+  getCurrentBalance,
+  getBoletasPartialPaymentMap,
+  recalculateBoletaEstados,
+} from './billing.service.js';
 
 /**
  * Helper to build full name from parts
@@ -33,11 +38,24 @@ export async function searchCustomers(
   // Build search conditions for name parts
   const searchConditions = [
     { rut: { contains: sanitizedQuery, mode: 'insensitive' as const } },
-    { numero_cliente: { contains: sanitizedQuery, mode: 'insensitive' as const } },
-    { primer_nombre: { contains: sanitizedQuery, mode: 'insensitive' as const } },
-    { segundo_nombre: { contains: sanitizedQuery, mode: 'insensitive' as const } },
-    { primer_apellido: { contains: sanitizedQuery, mode: 'insensitive' as const } },
-    { segundo_apellido: { contains: sanitizedQuery, mode: 'insensitive' as const } },
+    {
+      numero_cliente: { contains: sanitizedQuery, mode: 'insensitive' as const },
+    },
+    {
+      primer_nombre: { contains: sanitizedQuery, mode: 'insensitive' as const },
+    },
+    {
+      segundo_nombre: { contains: sanitizedQuery, mode: 'insensitive' as const },
+    },
+    {
+      primer_apellido: { contains: sanitizedQuery, mode: 'insensitive' as const },
+    },
+    {
+      segundo_apellido: {
+        contains: sanitizedQuery,
+        mode: 'insensitive' as const,
+      },
+    },
   ];
 
   const customers = await prisma.clientes.findMany({
@@ -139,6 +157,7 @@ export async function searchCustomers(
 /**
  * Get full customer profile for admin view
  * Includes computed saldo and address
+ * Uses centralized billing service for balance calculation
  */
 export async function getCustomerProfile(clienteId: bigint) {
   const customer = await prisma.clientes.findUnique({
@@ -176,18 +195,9 @@ export async function getCustomerProfile(clienteId: bigint) {
     throw new Error('Cliente no encontrado');
   }
 
-  // Calculate real-time balance from pending boletas
-  const saldoResult = await prisma.boletas.aggregate({
-    where: {
-      cliente_id: clienteId,
-      estado: 'pendiente',
-    },
-    _sum: {
-      monto_total: true,
-    },
-  });
+  // Use centralized balance calculation
+  const saldo = await getCurrentBalance(clienteId);
 
-  const saldo = Number(saldoResult._sum.monto_total || 0);
   const direccion = customer.direcciones[0];
   const direccionStr = direccion
     ? `${direccion.direccion_calle} ${direccion.direccion_numero || ''}, ${direccion.poblacion}, ${direccion.comuna}`.trim()
@@ -267,12 +277,20 @@ export async function getCustomerPayments(
 
 /**
  * Get customer boletas (admin view)
+ * Returns monto_total_mes (individual month) for display
+ * Also calculates partial payment status for pending boletas
+ * Uses centralized billing service for calculations
  */
 export async function getCustomerBoletas(
   clienteId: bigint,
   limit: number = 50,
   cursor?: string
 ) {
+  // Use centralized partial payment calculation
+  const { map: partialPaymentMap } =
+    await getBoletasPartialPaymentMap(clienteId);
+
+  // Get paginated boletas
   const boletas = await prisma.boletas.findMany({
     where: { cliente_id: clienteId },
     take: limit + 1,
@@ -287,6 +305,7 @@ export async function getCustomerBoletas(
       fecha_emision: true,
       fecha_vencimiento: true,
       monto_total: true,
+      monto_total_mes: true, // Individual month's charges
       estado: true,
       consumo_m3: true,
     },
@@ -297,17 +316,30 @@ export async function getCustomerBoletas(
   const nextCursor = hasNextPage ? data[data.length - 1].id.toString() : null;
 
   return {
-    data: data.map((b) => ({
-      id: b.id.toString(),
-      numeroFolio: b.numero_folio,
-      periodoDesde: b.periodo_desde,
-      periodoHasta: b.periodo_hasta,
-      fechaEmision: b.fecha_emision,
-      fechaVencimiento: b.fecha_vencimiento,
-      montoTotal: Number(b.monto_total),
-      estado: b.estado,
-      consumoM3: b.consumo_m3 ? Number(b.consumo_m3) : null,
-    })),
+    data: data.map((b) => {
+      const partialInfo = partialPaymentMap.get(b.id.toString());
+      const montoMes = Number(b.monto_total_mes || b.monto_total);
+
+      return {
+        id: b.id.toString(),
+        numeroFolio: b.numero_folio,
+        periodoDesde: b.periodo_desde,
+        periodoHasta: b.periodo_hasta,
+        fechaEmision: b.fecha_emision,
+        fechaVencimiento: b.fecha_vencimiento,
+        // Use monto_total_mes (individual month) for display
+        montoTotal: montoMes,
+        montoTotalAcumulado: Number(b.monto_total), // Keep cumulative for reference
+        estado: b.estado,
+        // Add partial payment info for pending boletas
+        montoAdeudado:
+          b.estado === 'pendiente'
+            ? (partialInfo?.montoAdeudado ?? montoMes)
+            : 0,
+        parcialmentePagada: partialInfo?.parcialmentePagada ?? false,
+        consumoM3: b.consumo_m3 ? Number(b.consumo_m3) : null,
+      };
+    }),
     pagination: { hasNextPage, nextCursor },
   };
 }
@@ -442,7 +474,10 @@ export async function registrarPago(
   operadorEmail: string,
   ipAddress: string,
   userAgent: string,
-  logger: { info: (msg: string, data?: object) => void; error: (msg: string, data?: object) => void }
+  logger: {
+    info: (msg: string, data?: object) => void;
+    error: (msg: string, data?: object) => void;
+  }
 ) {
   const clienteId = BigInt(data.clienteId);
 
@@ -491,83 +526,20 @@ export async function registrarPago(
           },
         });
 
-        // 3. Get pending boletas with row-level lock (FOR UPDATE)
-        // This prevents concurrent payments from applying to same boletas
-        const boletasPendientes = await tx.$queryRaw<
-          Array<{
-            id: bigint;
-            monto_total: string; // Decimal comes as string from raw query
-            fecha_emision: Date;
-            observaciones: string | null;
-          }>
-        >`
-          SELECT id, monto_total, fecha_emision, observaciones
-          FROM boletas
-          WHERE cliente_id = ${clienteId} AND estado = 'pendiente'
-          ORDER BY fecha_emision ASC
-          FOR UPDATE
-        `;
+        // 3. Apply FIFO payment logic using centralized billing service
+        const fifoResult = await recalculateBoletaEstados(clienteId, tx);
 
-        // 4. Apply payment to boletas (FIFO - oldest first)
-        let montoRestante = data.monto;
-        const boletasAfectadas: Array<{
-          boletaId: string;
-          montoAplicado: number;
-          tipo: 'completo' | 'parcial';
-        }> = [];
+        // Convert FIFO result to boletasAfectadas format for response
+        const boletasAfectadas = fifoResult.detalles.map((d) => ({
+          boletaId: d.boletaId,
+          montoAplicado: d.montoTotal,
+          tipo: 'completo' as const,
+        }));
 
-        for (const boleta of boletasPendientes) {
-          if (montoRestante <= 0) break;
-
-          const montoBoleta = Number(boleta.monto_total);
-
-          if (montoRestante >= montoBoleta) {
-            // Full payment - mark boleta as paid
-            await tx.boletas.update({
-              where: { id: boleta.id },
-              data: {
-                estado: 'pagada',
-                fecha_actualizacion: new Date(),
-              },
-            });
-
-            boletasAfectadas.push({
-              boletaId: boleta.id.toString(),
-              montoAplicado: montoBoleta,
-              tipo: 'completo',
-            });
-
-            montoRestante -= montoBoleta;
-          } else {
-            // Partial payment - add note to boleta
-            const notaActual = boleta.observaciones || '';
-            const fechaHoy = new Date().toLocaleDateString('es-CL');
-            const nuevaNota =
-              `${notaActual}\n[${fechaHoy}] Pago parcial: $${montoRestante.toLocaleString('es-CL')} - Ref: ${pago.id}`.trim();
-
-            await tx.boletas.update({
-              where: { id: boleta.id },
-              data: {
-                observaciones: nuevaNota,
-                fecha_actualizacion: new Date(),
-              },
-            });
-
-            boletasAfectadas.push({
-              boletaId: boleta.id.toString(),
-              montoAplicado: montoRestante,
-              tipo: 'parcial',
-            });
-
-            montoRestante = 0;
-          }
-        }
-
-        // 5. If money left over (overpayment), note it
-        let observacionesFinal = data.observaciones || '';
-        if (montoRestante > 0) {
-          observacionesFinal =
-            `${observacionesFinal}\n[Saldo a favor: $${montoRestante.toLocaleString('es-CL')}]`.trim();
+        // 4. If customer has credit (overpayment), note it on the payment
+        if (fifoResult.creditoDisponible > 0) {
+          const observacionesFinal =
+            `${data.observaciones || ''}\n[Saldo a favor: $${fifoResult.creditoDisponible.toLocaleString('es-CL')}]`.trim();
 
           await tx.pagos.update({
             where: { id: pago.id },
@@ -575,17 +547,9 @@ export async function registrarPago(
           });
         }
 
-        // 6. Calculate new balance
-        const nuevoSaldoResult = await tx.boletas.aggregate({
-          where: {
-            cliente_id: clienteId,
-            estado: 'pendiente',
-          },
-          _sum: { monto_total: true },
-        });
-        const saldoNuevo = Number(nuevoSaldoResult._sum.monto_total || 0);
+        const saldoNuevo = fifoResult.saldoNuevo;
 
-        // 7. Create audit log entry
+        // 5. Create audit log entry
         await tx.log_auditoria.create({
           data: {
             accion: 'REGISTRO_PAGO',
@@ -600,9 +564,9 @@ export async function registrarPago(
               pagoId: pago.id.toString(),
               monto: data.monto,
               tipoPago: data.tipoPago,
-              boletasAfectadas: boletasAfectadas.length,
+              boletasActualizadas: fifoResult.boletasActualizadas,
               saldoNuevo: saldoNuevo,
-              saldoAFavor: montoRestante > 0 ? montoRestante : 0,
+              saldoAFavor: fifoResult.creditoDisponible,
             },
             ip_address: ipAddress,
             user_agent: userAgent,
@@ -613,8 +577,8 @@ export async function registrarPago(
           clienteId: clienteId.toString(),
           clienteRut: cliente.rut,
           monto: data.monto,
-          boletasAfectadas: boletasAfectadas.length,
-          saldoRestante: montoRestante,
+          boletasActualizadas: fifoResult.boletasActualizadas,
+          creditoDisponible: fifoResult.creditoDisponible,
           operador: operadorEmail,
         });
 
@@ -637,7 +601,7 @@ export async function registrarPago(
             nombre: nombreCliente,
           },
           boletasAfectadas,
-          saldoRestante: montoRestante,
+          creditoDisponible: fifoResult.creditoDisponible,
           saldoNuevo,
         };
       },
@@ -649,7 +613,8 @@ export async function registrarPago(
       }
     );
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage =
+      error instanceof Error ? error.message : 'Unknown error';
     const errorStack = error instanceof Error ? error.stack : undefined;
 
     logger.error('Payment application failed - transaction rolled back', {

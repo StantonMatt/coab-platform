@@ -1,5 +1,10 @@
 import prisma from '../lib/prisma.js';
 import { formatearPesos } from '@coab/utils';
+import {
+  getCurrentBalance,
+  getNextDueDate,
+  getBoletasPartialPaymentMap,
+} from './billing.service.js';
 
 /**
  * Build full name from cliente name parts
@@ -70,43 +75,19 @@ export async function getCustomerProfile(clienteId: bigint) {
 }
 
 /**
- * Calculate customer balance from pending boletas
+ * Calculate customer balance
+ * Uses centralized billing service for consistent calculations
  */
 export async function getCustomerBalance(clienteId: bigint) {
-  // Sum all pending boletas
-  const result = await prisma.boletas.aggregate({
-    where: {
-      cliente_id: clienteId,
-      estado: 'pendiente',
-    },
-    _sum: {
-      monto_total: true,
-    },
-  });
-
-  const saldo = result._sum.monto_total || 0;
-
-  // Get earliest due date from pending boletas
-  const nextBoleta = await prisma.boletas.findFirst({
-    where: {
-      cliente_id: clienteId,
-      estado: 'pendiente',
-    },
-    orderBy: {
-      fecha_vencimiento: 'asc',
-    },
-    select: {
-      fecha_vencimiento: true,
-    },
-  });
-
-  const saldoNumber = Number(saldo);
+  // Use centralized balance calculation
+  const saldo = await getCurrentBalance(clienteId);
+  const fechaVencimiento = await getNextDueDate(clienteId);
 
   return {
-    saldo: saldoNumber,
-    saldoFormateado: formatearPesos(saldoNumber),
-    fechaVencimiento: nextBoleta?.fecha_vencimiento || null,
-    estadoCuenta: saldoNumber > 0 ? 'MOROSO' : 'AL_DIA',
+    saldo,
+    saldoFormateado: formatearPesos(saldo),
+    fechaVencimiento,
+    estadoCuenta: saldo > 0 ? 'MOROSO' : 'AL_DIA',
   };
 }
 
@@ -136,9 +117,7 @@ export async function getCustomerPayments(
 
   const hasNextPage = payments.length > limit;
   const data = hasNextPage ? payments.slice(0, -1) : payments;
-  const nextCursor = hasNextPage
-    ? data[data.length - 1].id.toString()
-    : null;
+  const nextCursor = hasNextPage ? data[data.length - 1].id.toString() : null;
 
   return {
     data: data.map((p) => ({
@@ -159,12 +138,19 @@ export async function getCustomerPayments(
 
 /**
  * Get customer boletas with cursor-based pagination
+ * Returns monto_total_mes (individual month) for display, NOT monto_total (cumulative)
+ * Also calculates partial payment status for pending boletas
  */
 export async function getCustomerBoletas(
   clienteId: bigint,
   limit: number = 50,
   cursor?: string
 ) {
+  // Use centralized partial payment calculation
+  const { map: partialPaymentMap } =
+    await getBoletasPartialPaymentMap(clienteId);
+
+  // Get paginated boletas
   const boletas = await prisma.boletas.findMany({
     where: { cliente_id: clienteId },
     take: limit + 1,
@@ -178,6 +164,7 @@ export async function getCustomerBoletas(
       fecha_emision: true,
       fecha_vencimiento: true,
       monto_total: true,
+      monto_total_mes: true, // Individual month's charges
       estado: true,
       consumo_m3: true,
     },
@@ -185,22 +172,31 @@ export async function getCustomerBoletas(
 
   const hasNextPage = boletas.length > limit;
   const data = hasNextPage ? boletas.slice(0, -1) : boletas;
-  const nextCursor = hasNextPage
-    ? data[data.length - 1].id.toString()
-    : null;
+  const nextCursor = hasNextPage ? data[data.length - 1].id.toString() : null;
 
   return {
-    data: data.map((b) => ({
-      id: b.id.toString(),
-      numeroFolio: b.numero_folio,
-      periodoDesde: b.periodo_desde,
-      periodoHasta: b.periodo_hasta,
-      fechaEmision: b.fecha_emision,
-      fechaVencimiento: b.fecha_vencimiento,
-      montoTotal: Number(b.monto_total),
-      estado: b.estado,
-      consumoM3: b.consumo_m3 ? Number(b.consumo_m3) : null,
-    })),
+    data: data.map((b) => {
+      const partialInfo = partialPaymentMap.get(b.id.toString());
+      const montoMes = Number(b.monto_total_mes || b.monto_total);
+
+      return {
+        id: b.id.toString(),
+        numeroFolio: b.numero_folio,
+        periodoDesde: b.periodo_desde,
+        periodoHasta: b.periodo_hasta,
+        fechaEmision: b.fecha_emision,
+        fechaVencimiento: b.fecha_vencimiento,
+        // Use monto_total_mes (individual month) for display, fallback to monto_total
+        montoTotal: montoMes,
+        montoTotalAcumulado: Number(b.monto_total), // Keep cumulative for reference
+        estado: b.estado,
+        // Add partial payment info for pending boletas
+        montoAdeudado:
+          b.estado === 'pendiente' ? (partialInfo?.montoAdeudado ?? montoMes) : 0,
+        parcialmentePagada: partialInfo?.parcialmentePagada ?? false,
+        consumoM3: b.consumo_m3 ? Number(b.consumo_m3) : null,
+      };
+    }),
     pagination: {
       hasNextPage,
       nextCursor,
@@ -291,5 +287,3 @@ export async function getActiveNotifications() {
     hasta: n.hasta,
   }));
 }
-
-

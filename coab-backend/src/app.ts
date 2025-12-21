@@ -6,6 +6,7 @@ import { env } from './config/env.js';
 import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import paymentRoutes, { webhookRoutes } from './routes/payment.routes.js';
 
 // Fix BigInt JSON serialization globally
 // Prisma returns BigInt for BIGSERIAL columns
@@ -110,6 +111,12 @@ export async function buildApp(): Promise<FastifyInstance> {
 
       // Admin routes (customer management, account unlock)
       await api.register(adminRoutes, { prefix: '/admin' });
+
+      // Payment routes (Mercado Pago customer payments)
+      await api.register(paymentRoutes, { prefix: '/pagos' });
+
+      // Webhook routes (public, no auth)
+      await api.register(webhookRoutes, { prefix: '/webhooks' });
     },
     { prefix: '/api/v1' }
   );

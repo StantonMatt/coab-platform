@@ -62,7 +62,9 @@ interface Boleta {
   fechaEmision: string;
   fechaVencimiento: string;
   montoTotal: number;
+  montoAdeudado?: number;
   estado: string;
+  parcialmentePagada?: boolean;
   consumoM3: number | null;
 }
 
@@ -505,17 +507,30 @@ export default function CustomerProfilePage() {
                               : '-'}
                           </td>
                           <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                            {formatearPesos(boleta.montoTotal)}
+                            {boleta.parcialmentePagada ? (
+                              <div className="flex flex-col items-end">
+                                <span>{formatearPesos(boleta.montoAdeudado || 0)}</span>
+                                <span className="text-xs text-slate-400 line-through">
+                                  {formatearPesos(boleta.montoTotal)}
+                                </span>
+                              </div>
+                            ) : (
+                              formatearPesos(boleta.montoTotal)
+                            )}
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span
                               className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                                boleta.estado === 'pendiente'
+                                boleta.parcialmentePagada
                                   ? 'bg-amber-100 text-amber-700'
+                                  : boleta.estado === 'pendiente'
+                                  ? 'bg-orange-100 text-orange-700'
                                   : 'bg-emerald-100 text-emerald-700'
                               }`}
                             >
-                              {boleta.estado === 'pendiente'
+                              {boleta.parcialmentePagada
+                                ? 'Parcial'
+                                : boleta.estado === 'pendiente'
                                 ? 'Pendiente'
                                 : 'Pagada'}
                             </span>

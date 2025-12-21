@@ -1,12 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { formatearPesos } from '@coab/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import apiClient from '@/lib/api';
+import PaymentModal from '@/components/PaymentModal';
+import { CreditCard } from 'lucide-react';
 
 // Types
 interface Notification {
@@ -40,7 +42,9 @@ interface Boleta {
   fechaEmision: string;
   fechaVencimiento: string;
   montoTotal: number;
+  montoAdeudado?: number;
   estado: string;
+  parcialmentePagada?: boolean;
   consumoM3: number | null;
 }
 
@@ -56,6 +60,8 @@ interface User {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
   // Check authentication
   useEffect(() => {
@@ -64,6 +70,14 @@ export default function DashboardPage() {
       navigate('/login');
     }
   }, [navigate]);
+
+  // Handle successful payment - refresh data
+  const handlePaymentSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ['saldo'] });
+    queryClient.invalidateQueries({ queryKey: ['pagos'] });
+    queryClient.invalidateQueries({ queryKey: ['boletas'] });
+    queryClient.invalidateQueries({ queryKey: ['pending-boletas'] });
+  };
 
   // Get user from localStorage
   const user: User | null = (() => {
@@ -214,6 +228,19 @@ export default function DashboardPage() {
                 )}
               </p>
             </div>
+            
+            {/* Pay Now Button */}
+            {saldo && saldo.saldo > 0 && (
+              <div className="mt-4 px-2">
+                <Button
+                  onClick={() => setIsPaymentModalOpen(true)}
+                  className="w-full h-12 bg-white text-blue-600 hover:bg-blue-50 font-semibold text-base shadow-lg"
+                >
+                  <CreditCard className="w-5 h-5 mr-2" />
+                  Pagar Ahora
+                </Button>
+              </div>
+            )}
           </div>
         </Card>
 
@@ -293,17 +320,32 @@ export default function DashboardPage() {
                           })}
                         </p>
                         <p className="text-sm text-gray-600">
-                          {formatearPesos(boleta.montoTotal)}
+                          {boleta.parcialmentePagada ? (
+                            <span className="flex items-center gap-2">
+                              <span>{formatearPesos(boleta.montoAdeudado || 0)}</span>
+                              <span className="text-gray-400 line-through text-xs">
+                                {formatearPesos(boleta.montoTotal)}
+                              </span>
+                            </span>
+                          ) : (
+                            formatearPesos(boleta.montoTotal)
+                          )}
                         </p>
                       </div>
                       <span
                         className={`text-xs px-2 py-1 rounded ${
-                          boleta.estado === 'pendiente'
-                            ? 'bg-amber-100 text-amber-800'
+                          boleta.parcialmentePagada
+                            ? 'bg-amber-100 text-amber-700'
+                            : boleta.estado === 'pendiente'
+                            ? 'bg-orange-100 text-orange-800'
                             : 'bg-green-100 text-green-800'
                         }`}
                       >
-                        {boleta.estado === 'pendiente' ? 'Pendiente' : 'Pagada'}
+                        {boleta.parcialmentePagada
+                          ? 'Parcial'
+                          : boleta.estado === 'pendiente'
+                          ? 'Pendiente'
+                          : 'Pagada'}
                       </span>
                     </div>
                   ))}
@@ -344,6 +386,14 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </main>
+
+      {/* Payment Modal */}
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        saldo={saldo?.saldo || 0}
+        onPaymentSuccess={handlePaymentSuccess}
+      />
     </div>
   );
 }

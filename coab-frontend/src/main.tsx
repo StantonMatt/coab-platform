@@ -2,17 +2,26 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { initMercadoPago } from '@mercadopago/sdk-react';
 import { Toaster } from '@/components/ui/toaster';
 import LoginPage from './pages/Login';
 import DashboardPage from './pages/Dashboard';
 import BoletaDetailPage from './pages/BoletaDetail';
 import SetupPage from './pages/Setup';
 import RecuperarPage from './pages/Recuperar';
+import PaymentResultPage from './pages/PaymentResult';
 import AdminLoginPage from './pages/admin/Login';
 import AdminDashboardPage from './pages/admin/Dashboard';
 import AdminCustomersPage from './pages/admin/Customers';
 import AdminCustomerProfilePage from './pages/admin/CustomerProfile';
 import './index.css';
+
+// Initialize Mercado Pago SDK (public key will be fetched from backend)
+// This is safe to call with undefined - it will be initialized when the key is available
+const MP_PUBLIC_KEY = import.meta.env.VITE_MERCADOPAGO_PUBLIC_KEY;
+if (MP_PUBLIC_KEY) {
+  initMercadoPago(MP_PUBLIC_KEY, { locale: 'es-CL' });
+}
 
 // Configure React Query
 const queryClient = new QueryClient({
@@ -36,6 +45,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/boletas/:id" element={<BoletaDetailPage />} />
           <Route path="/setup/:token" element={<SetupPage />} />
+          <Route path="/pago/resultado" element={<PaymentResultPage />} />
           <Route path="/" element={<Navigate to="/login" replace />} />
           
           {/* Admin Portal */}
