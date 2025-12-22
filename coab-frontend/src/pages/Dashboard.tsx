@@ -179,7 +179,13 @@ export default function DashboardPage() {
     queryKey: ['saved-cards'],
     queryFn: async () => {
       const res = await apiClient.get('/pagos/config');
-      return res.data?.transbank?.savedCards as SavedCard[] || [];
+      // API returns tarjetas, map to our SavedCard interface
+      const tarjetas = res.data?.transbank?.tarjetas || [];
+      return tarjetas.map((t: { id: string; ultimosDigitos: string | null; tipoTarjeta: string | null }) => ({
+        id: t.id,
+        ultimosDigitos: t.ultimosDigitos,
+        tipoTarjeta: t.tipoTarjeta,
+      })) as SavedCard[];
     },
     enabled: !!localStorage.getItem('access_token'),
   });
