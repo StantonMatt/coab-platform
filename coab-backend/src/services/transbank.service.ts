@@ -19,39 +19,21 @@ const TransbankSDK = require('transbank-sdk');
 const Oneclick = TransbankSDK.Oneclick;
 const TransactionDetail = TransbankSDK.TransactionDetail;
 
-// Integration (sandbox) credentials - hardcoded for testing
-// From: https://www.transbankdevelopers.cl/documentacion/oneclick
-const INTEGRATION_COMMERCE_CODES = {
-  ONECLICK_MALL: '597055555541',
-  ONECLICK_MALL_CHILD1: '597055555542',
-};
-const INTEGRATION_API_KEY = '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C';
-
 // Type for transaction client
 type TransactionClient = Omit<
   PrismaClient,
   '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
 >;
 
-// Get commerce codes and API keys
+// Get commerce codes and API keys from environment
 function getCredentials() {
   const isProduction = env.TRANSBANK_ENVIRONMENT === 'production';
   
-  if (isProduction && env.TRANSBANK_COMMERCE_CODE && env.TRANSBANK_API_KEY) {
-    return {
-      commerceCode: env.TRANSBANK_COMMERCE_CODE,
-      apiKey: env.TRANSBANK_API_KEY,
-      childCommerceCode: env.TRANSBANK_COMMERCE_CODE, // Same for single commerce
-      isProduction: true,
-    };
-  }
-  
-  // Use integration/sandbox credentials
   return {
-    commerceCode: INTEGRATION_COMMERCE_CODES.ONECLICK_MALL,
-    apiKey: INTEGRATION_API_KEY,
-    childCommerceCode: INTEGRATION_COMMERCE_CODES.ONECLICK_MALL_CHILD1,
-    isProduction: false,
+    commerceCode: env.TRANSBANK_COMMERCE_CODE,
+    apiKey: env.TRANSBANK_API_KEY,
+    childCommerceCode: env.TRANSBANK_CHILD_COMMERCE_CODE,
+    isProduction,
   };
 }
 
