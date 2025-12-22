@@ -2,7 +2,9 @@ import { FastifyPluginAsync } from 'fastify';
 import { ZodError } from 'zod';
 import * as adminService from '../services/admin.service.js';
 import * as twilioService from '../services/twilio.service.js';
+import * as autopagoService from '../services/autopago.service.js';
 import { requireAdmin } from '../middleware/auth.middleware.js';
+import { env } from '../config/env.js';
 import {
   searchSchema,
   paginationSchema,
@@ -398,6 +400,62 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   });
+
+  /**
+   * POST /admin/procesar-autopagos
+   * Trigger batch processing of all pending auto-payments
+   * Can be called by admin or by external cron with CRON_SECRET header
+   */
+  fastify.post(
+    '/procesar-autopagos',
+    {
+      // Skip admin auth if cron secret is provided
+      preHandler: async (request, reply) => {
+        const cronSecret = request.headers['x-cron-secret'];
+
+        // If valid cron secret, allow access
+        if (cronSecret && env.CRON_SECRET && cronSecret === env.CRON_SECRET) {
+          return;
+        }
+
+        // Otherwise, require admin auth
+        await requireAdmin(request, reply);
+      },
+    },
+    async (request, reply) => {
+      try {
+        fastify.log.info('Iniciando procesamiento de pagos automáticos');
+
+        const result = await autopagoService.processAllPendingAutoPayments(
+          fastify.log
+        );
+
+        fastify.log.info(
+          {
+            procesados: result.procesados,
+            exitosos: result.exitosos,
+            fallidos: result.fallidos,
+            omitidos: result.omitidos,
+          },
+          'Procesamiento de pagos automáticos completado'
+        );
+
+        return {
+          success: true,
+          mensaje: `Procesados: ${result.procesados}, Exitosos: ${result.exitosos}, Fallidos: ${result.fallidos}, Omitidos: ${result.omitidos}`,
+          ...result,
+        };
+      } catch (error: any) {
+        fastify.log.error(error, 'Error procesando pagos automáticos');
+        return reply.code(500).send({
+          error: {
+            code: 'PROCESSING_ERROR',
+            message: 'Error al procesar pagos automáticos',
+          },
+        });
+      }
+    }
+  );
 };
 
 export default adminRoutes;

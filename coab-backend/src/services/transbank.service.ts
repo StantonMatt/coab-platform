@@ -84,6 +84,7 @@ export interface InscriptionFinishResult {
 export interface PaymentResult {
   success: boolean;
   transaccionOnlineId?: string;
+  pagoId?: string;
   buyOrder?: string;
   authorizationCode?: string;
   amount?: number;
@@ -439,6 +440,7 @@ export async function authorizePayment(
           return {
             success: true,
             transaccionOnlineId: transaccionOnline.id.toString(),
+            pagoId: fifoResult.pagoId,
             buyOrder: parentBuyOrder,
             authorizationCode: detail?.authorization_code,
             amount,
@@ -560,7 +562,7 @@ async function applyFIFOPayment(
   transaccionOnlineId: bigint,
   cliente: { id: bigint; numero_cliente: string },
   logger: { info: (msg: string, data?: object) => void }
-): Promise<{ saldoNuevo: number }> {
+): Promise<{ saldoNuevo: number; pagoId: string }> {
   // Create pago record
   const pago = await tx.pagos.create({
     data: {
@@ -601,7 +603,7 @@ async function applyFIFOPayment(
     saldoNuevo: fifoResult.saldoNuevo,
   });
 
-  return { saldoNuevo: fifoResult.saldoNuevo };
+  return { saldoNuevo: fifoResult.saldoNuevo, pagoId: pago.id.toString() };
 }
 
 /**

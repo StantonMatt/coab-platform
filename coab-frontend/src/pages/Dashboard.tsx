@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { formatearPesos } from '@coab/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import apiClient from '@/lib/api';
 import PaymentModal from '@/components/PaymentModal';
-import { CreditCard } from 'lucide-react';
+import { CreditCard, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 
 // Types
 interface Notification {
@@ -56,6 +64,33 @@ interface User {
   email?: string;
   telefono?: string;
   estadoCuenta: string;
+}
+
+interface AutoPayStatus {
+  activo: boolean;
+  tarjetaId: string | null;
+  tarjetaUltimosDigitos: string | null;
+  tarjetaTipo: string | null;
+  ultimoIntento: {
+    fecha: string;
+    estado: string;
+    monto: number;
+    error: string | null;
+  } | null;
+  historial: Array<{
+    id: string;
+    fecha: string;
+    monto: number;
+    estado: string;
+    intentoNumero: number;
+    errorMensaje: string | null;
+  }>;
+}
+
+interface SavedCard {
+  id: string;
+  ultimosDigitos: string | null;
+  tipoTarjeta: string | null;
 }
 
 export default function DashboardPage() {
@@ -128,6 +163,47 @@ export default function DashboardPage() {
     },
     enabled: !!localStorage.getItem('access_token'),
   });
+
+  // Fetch auto-pay status
+  const { data: autopagoData, isLoading: autopagoLoading, refetch: refetchAutopago } = useQuery({
+    queryKey: ['autopago'],
+    queryFn: async () => {
+      const res = await apiClient.get('/clientes/me/autopago');
+      return res.data as { data: AutoPayStatus };
+    },
+    enabled: !!localStorage.getItem('access_token'),
+  });
+
+  // Fetch saved cards for auto-pay
+  const { data: cardsData } = useQuery({
+    queryKey: ['saved-cards'],
+    queryFn: async () => {
+      const res = await apiClient.get('/pagos/config');
+      return res.data?.transbank?.savedCards as SavedCard[] || [];
+    },
+    enabled: !!localStorage.getItem('access_token'),
+  });
+
+  // Mutations for auto-pay
+  const activarAutopagoMutation = useMutation({
+    mutationFn: async (tarjetaId: string) => {
+      await apiClient.post('/clientes/me/autopago/activar', { tarjetaId });
+    },
+    onSuccess: () => {
+      refetchAutopago();
+    },
+  });
+
+  const desactivarAutopagoMutation = useMutation({
+    mutationFn: async () => {
+      await apiClient.post('/clientes/me/autopago/desactivar');
+    },
+    onSuccess: () => {
+      refetchAutopago();
+    },
+  });
+
+  const [selectedCardForAutopay, setSelectedCardForAutopay] = useState<string>('');
 
   const handleLogout = async () => {
     const refreshToken = localStorage.getItem('refresh_token');
@@ -242,6 +318,191 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+        </Card>
+
+        {/* Auto-Pay Section */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Clock className="w-5 h-5" /> Pago Automático
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {autopagoLoading ? (
+              <div className="py-4 text-center text-gray-500">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Toggle and Card Selection */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <Switch
+                      checked={autopagoData?.data?.activo || false}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          // If enabling, need to select a card first
+                          const cardId = selectedCardForAutopay || autopagoData?.data?.tarjetaId;
+                          if (cardId) {
+                            activarAutopagoMutation.mutate(cardId);
+                          }
+                        } else {
+                          desactivarAutopagoMutation.mutate();
+                        }
+                      }}
+                      disabled={
+                        activarAutopagoMutation.isPending ||
+                        desactivarAutopagoMutation.isPending ||
+                        (!autopagoData?.data?.activo && !selectedCardForAutopay && !autopagoData?.data?.tarjetaId && (!cardsData || cardsData.length === 0))
+                      }
+                    />
+                    <div>
+                      <p className="font-medium">
+                        {autopagoData?.data?.activo ? 'Activo' : 'Inactivo'}
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        Cobra automáticamente cada mes
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Card Selector */}
+                  {cardsData && cardsData.length > 0 ? (
+                    <Select
+                      value={selectedCardForAutopay || autopagoData?.data?.tarjetaId || ''}
+                      onValueChange={(value) => {
+                        setSelectedCardForAutopay(value);
+                        if (autopagoData?.data?.activo) {
+                          // If already active, update the card
+                          activarAutopagoMutation.mutate(value);
+                        }
+                      }}
+                      disabled={activarAutopagoMutation.isPending || desactivarAutopagoMutation.isPending}
+                    >
+                      <SelectTrigger className="w-full sm:w-[200px]">
+                        <SelectValue placeholder="Seleccionar tarjeta" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cardsData.map((card) => (
+                          <SelectItem key={card.id} value={card.id}>
+                            {card.tipoTarjeta?.toUpperCase() || 'Tarjeta'} ****
+                            {card.ultimosDigitos}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      Guarda una tarjeta para activar
+                    </p>
+                  )}
+                </div>
+
+                {/* Current card info when active */}
+                {autopagoData?.data?.activo && autopagoData?.data?.tarjetaUltimosDigitos && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
+                    <CreditCard className="w-4 h-4" />
+                    <span>
+                      Usando {autopagoData.data.tarjetaTipo?.toUpperCase() || 'Tarjeta'} terminada en{' '}
+                      ****{autopagoData.data.tarjetaUltimosDigitos}
+                    </span>
+                  </div>
+                )}
+
+                {/* Last attempt status */}
+                {autopagoData?.data?.ultimoIntento && (
+                  <div
+                    className={`flex items-start gap-3 p-3 rounded-lg ${
+                      autopagoData.data.ultimoIntento.estado === 'exitoso'
+                        ? 'bg-green-50 text-green-800'
+                        : autopagoData.data.ultimoIntento.estado === 'fallido'
+                        ? 'bg-red-50 text-red-800'
+                        : 'bg-gray-50 text-gray-800'
+                    }`}
+                  >
+                    {autopagoData.data.ultimoIntento.estado === 'exitoso' ? (
+                      <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                    ) : autopagoData.data.ultimoIntento.estado === 'fallido' ? (
+                      <XCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                    )}
+                    <div>
+                      <p className="font-medium">
+                        {autopagoData.data.ultimoIntento.estado === 'exitoso'
+                          ? 'Último pago exitoso'
+                          : autopagoData.data.ultimoIntento.estado === 'fallido'
+                          ? 'Último intento fallido'
+                          : 'Último intento'}
+                      </p>
+                      <p className="text-sm">
+                        {formatearPesos(autopagoData.data.ultimoIntento.monto)} -{' '}
+                        {format(
+                          new Date(autopagoData.data.ultimoIntento.fecha),
+                          'dd/MM/yyyy HH:mm'
+                        )}
+                      </p>
+                      {autopagoData.data.ultimoIntento.error && (
+                        <p className="text-sm mt-1">
+                          {autopagoData.data.ultimoIntento.error}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recent history */}
+                {autopagoData?.data?.historial && autopagoData.data.historial.length > 0 && (
+                  <div className="border-t pt-4 mt-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">
+                      Historial de pagos automáticos
+                    </p>
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                      {autopagoData.data.historial.slice(0, 5).map((intento) => (
+                        <div
+                          key={intento.id}
+                          className="flex items-center justify-between text-sm"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                intento.estado === 'exitoso'
+                                  ? 'bg-green-500'
+                                  : intento.estado === 'fallido'
+                                  ? 'bg-red-500'
+                                  : 'bg-gray-400'
+                              }`}
+                            />
+                            <span className="text-gray-600">
+                              {format(new Date(intento.fecha), 'dd/MM/yy')}
+                            </span>
+                          </div>
+                          <span className="font-medium">
+                            {formatearPesos(intento.monto)}
+                          </span>
+                          <span
+                            className={`text-xs ${
+                              intento.estado === 'exitoso'
+                                ? 'text-green-600'
+                                : intento.estado === 'fallido'
+                                ? 'text-red-600'
+                                : 'text-gray-500'
+                            }`}
+                          >
+                            {intento.estado === 'exitoso'
+                              ? '✓'
+                              : intento.estado === 'fallido'
+                              ? '✗'
+                              : '-'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
         </Card>
 
         {/* Two Column Layout for Desktop */}

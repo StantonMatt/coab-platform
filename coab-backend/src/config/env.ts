@@ -22,6 +22,13 @@ const envSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_WHATSAPP_FROM: z.string().optional(),
 
+  // Optional: Twilio SendGrid Email
+  SENDGRID_API_KEY: z.string().optional(),
+  SENDGRID_FROM_EMAIL: z.string().email().default('noreply@coab.cl'),
+
+  // Optional: Cron secret for automated jobs
+  CRON_SECRET: z.string().optional(),
+
   // Optional: Mercado Pago
   MERCADOPAGO_ACCESS_TOKEN: z.string().optional(),
   MERCADOPAGO_PUBLIC_KEY: z.string().optional(),

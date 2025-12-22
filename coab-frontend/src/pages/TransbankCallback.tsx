@@ -57,7 +57,7 @@ export default function TransbankCallbackPage() {
     // Get token from URL params or session storage
     const tbkToken = searchParams.get('TBK_TOKEN');
     const tbkOrdenCompra = searchParams.get('TBK_ORDEN_COMPRA');
-    const tbkIdSesion = searchParams.get('TBK_ID_SESION');
+    // Note: TBK_ID_SESION is also returned but not used
 
     // Check if user cancelled
     if (tbkOrdenCompra && !tbkToken) {

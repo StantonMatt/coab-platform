@@ -1,8 +1,14 @@
 import { FastifyPluginAsync } from 'fastify';
-import { ZodError } from 'zod';
+import { ZodError, z } from 'zod';
 import { paginationSchema, boletaIdSchema } from '../schemas/customer.schema.js';
 import * as customerService from '../services/customer.service.js';
+import * as autopagoService from '../services/autopago.service.js';
 import { requireCliente } from '../middleware/auth.middleware.js';
+
+// Schema for activar autopago
+const activarAutopagoSchema = z.object({
+  tarjetaId: z.string().min(1, 'ID de tarjeta requerido'),
+});
 
 const customerRoutes: FastifyPluginAsync = async (fastify) => {
   /**
@@ -168,6 +174,121 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error, 'Error al obtener boleta');
         return reply.code(500).send({
           error: { code: 'INTERNAL_ERROR', message: 'Error al obtener boleta' },
+        });
+      }
+    });
+
+    // =========================================================================
+    // Auto-Payment (Pago Automático) Endpoints
+    // =========================================================================
+
+    /**
+     * GET /clientes/me/autopago
+     * Get auto-pay status and history
+     */
+    protectedRoutes.get('/me/autopago', async (request, reply) => {
+      try {
+        const clienteId = request.user!.userId as bigint;
+
+        const [status, historial] = await Promise.all([
+          autopagoService.getAutoPayStatus(clienteId),
+          autopagoService.getAutoPayHistory(clienteId, 10),
+        ]);
+
+        return {
+          data: {
+            ...status,
+            historial,
+          },
+        };
+      } catch (error: any) {
+        fastify.log.error(error, 'Error al obtener estado de pago automático');
+        return reply.code(500).send({
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: 'Error al obtener estado de pago automático',
+          },
+        });
+      }
+    });
+
+    /**
+     * POST /clientes/me/autopago/activar
+     * Enable auto-pay with a specific card
+     */
+    protectedRoutes.post('/me/autopago/activar', async (request, reply) => {
+      try {
+        const body = activarAutopagoSchema.parse(request.body);
+        const clienteId = request.user!.userId as bigint;
+
+        const result = await autopagoService.enableAutoPay(
+          clienteId,
+          BigInt(body.tarjetaId)
+        );
+
+        if (!result.success) {
+          return reply.code(400).send({
+            error: {
+              code: 'BAD_REQUEST',
+              message: result.error || 'Error al activar pago automático',
+            },
+          });
+        }
+
+        fastify.log.info(
+          { clienteId: clienteId.toString(), tarjetaId: body.tarjetaId },
+          'Pago automático activado'
+        );
+
+        return {
+          success: true,
+          message: 'Pago automático activado correctamente',
+        };
+      } catch (error) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: error.errors[0].message,
+            },
+          });
+        }
+        fastify.log.error(error, 'Error al activar pago automático');
+        return reply.code(500).send({
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: 'Error al activar pago automático',
+          },
+        });
+      }
+    });
+
+    /**
+     * POST /clientes/me/autopago/desactivar
+     * Disable auto-pay
+     */
+    protectedRoutes.post('/me/autopago/desactivar', async (request, reply) => {
+      try {
+        const clienteId = request.user!.userId as bigint;
+
+        await autopagoService.disableAutoPay(clienteId);
+
+        fastify.log.info(
+          { clienteId: clienteId.toString() },
+          'Pago automático desactivado'
+        );
+
+        return {
+          success: true,
+          message: 'Pago automático desactivado correctamente',
+        };
+      } catch (error) {
+        fastify.log.error(error, 'Error al desactivar pago automático');
+        return reply.code(500).send({
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: 'Error al desactivar pago automático',
+          },
         });
       }
     });
