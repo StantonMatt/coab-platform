@@ -24,14 +24,13 @@ model clientes {
   es_cliente_actual    Boolean                @default(true)
   fecha_inicio         DateTime?              @db.Date
   fecha_termino        DateTime?              @db.Date
-  // Auth fields
-  hash_contrasena      String?
-  estado_cuenta        String                 @default("pendiente") // pendiente, activa, bloqueada, suspendida
-  ultimo_inicio_sesion DateTime?              @db.Timestamptz(6)
-  intentos_fallidos    Int                    @default(0)
   bloqueado_hasta      DateTime?              @db.Timestamptz(6)
-  // Relations
+  estado_cuenta        String                 @default("pendiente")
+  hash_contrasena      String?
+  intentos_fallidos    Int                    @default(0)
+  ultimo_inicio_sesion DateTime?              @db.Timestamptz(6)
   boletas              boletas[]
+  cortes_servicio      cortes_servicio[]
   descuentos_aplicados descuentos_aplicados[]
   direcciones          direcciones[]
   multas               multas[]
@@ -42,6 +41,7 @@ model clientes {
   subsidio_historial   subsidio_historial[]
   tokens_configuracion token_configuracion[]
   transacciones_online transacciones_online[]
+  tarjetas_guardadas   tarjetas_guardadas[]
 
   @@index([primer_apellido, segundo_apellido], map: "idx_clientes_apellidos")
   @@index([numero_cliente, es_cliente_actual], map: "idx_clientes_numero_actual")
@@ -58,13 +58,11 @@ model perfiles {
   fecha_creacion       DateTime?       @default(now()) @db.Timestamptz(6)
   fecha_actualizacion  DateTime?       @db.Timestamptz(6)
   is_admin             Boolean         @default(false)
-  // Auth fields
-  hash_contrasena      String?
-  rol                  String          @default("admin") // admin, billing_clerk, supervisor
-  ultimo_inicio_sesion DateTime?       @db.Timestamptz(6)
-  intentos_fallidos    Int             @default(0)
   bloqueado_hasta      DateTime?       @db.Timestamptz(6)
-  // Relations
+  hash_contrasena      String?
+  intentos_fallidos    Int             @default(0)
+  rol                  String          @default("admin")
+  ultimo_inicio_sesion DateTime?       @db.Timestamptz(6)
   active_period        active_period[]
 }
 
@@ -103,6 +101,7 @@ model boletas {
   costo_cargo_fijo                 Decimal?               @db.Decimal(10, 2)
   cliente                          clientes?              @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   repactacion                      repactaciones?         @relation(fields: [repactacion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cortes_servicio                  cortes_servicio[]
   descuentos_aplicados             descuentos_aplicados[]
   multas                           multas[]
 
@@ -153,22 +152,22 @@ model pagos {
 
 /// Online payment transactions (Mercado Pago, Transbank, etc.)
 model transacciones_online {
-  id                 BigInt    @id @default(autoincrement())
+  id                 BigInt   @id @default(autoincrement())
   cliente_id         BigInt
-  proveedor          String    @db.VarChar(50) // mercadopago, transbank
-  referencia_externa String    @db.VarChar(255) // External payment ID from provider
-  monto              Decimal   @db.Decimal(12, 2)
-  estado             String    @db.VarChar(50) // pending, approved, rejected, refunded, cancelled
-  estado_detalle     String?   @db.VarChar(255)
-  metodo_pago        String?   @db.VarChar(100) // visa, mastercard, etc.
-  cuotas             Int       @default(1)
-  datos_respuesta    Json?     @db.JsonB // Full response from payment provider
-  pago_id            BigInt? // Links to pagos record after successful payment
-  clave_idempotencia String?   @unique @db.VarChar(255) // Idempotency key
-  creado_en          DateTime  @default(now()) @db.Timestamptz(6)
-  actualizado_en     DateTime  @default(now()) @db.Timestamptz(6)
-  cliente            clientes  @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
-  pago               pagos?    @relation(fields: [pago_id], references: [id], onDelete: SetNull)
+  proveedor          String   @db.VarChar(50)
+  referencia_externa String   @db.VarChar(255)
+  monto              Decimal  @db.Decimal(12, 2)
+  estado             String   @db.VarChar(50)
+  estado_detalle     String?  @db.VarChar(255)
+  metodo_pago        String?  @db.VarChar(100)
+  cuotas             Int      @default(1)
+  datos_respuesta    Json?
+  pago_id            BigInt?
+  clave_idempotencia String?  @unique @db.VarChar(255)
+  creado_en          DateTime @default(now()) @db.Timestamptz(6)
+  actualizado_en     DateTime @default(now()) @db.Timestamptz(6)
+  cliente            clientes @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  pago               pagos?   @relation(fields: [pago_id], references: [id])
 
   @@index([cliente_id], map: "idx_transacciones_online_cliente")
   @@index([referencia_externa], map: "idx_transacciones_online_ref")
@@ -408,7 +407,7 @@ model descuentos_aplicados {
   cliente_id       BigInt?
   monto_aplicado   Decimal     @db.Decimal(10, 2)
   fecha_aplicacion DateTime?   @default(now()) @db.Timestamptz(6)
-  boleta           boletas?    @relation(fields: [boleta_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  boleta           boletas?    @relation(fields: [boleta_id], references: [id], onUpdate: NoAction)
   cliente          clientes?   @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   descuento        descuentos? @relation(fields: [descuento_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -482,22 +481,18 @@ model planillas_procesadas {
   notas                String?
 }
 
-// ===========================================
-// Authentication Tables
-// ===========================================
-
 /// Token for password setup/reset links (Iteration 7 & 7.5)
 model token_configuracion {
   id          BigInt    @id @default(autoincrement())
   cliente_id  BigInt
   token       String    @unique
-  tipo        String    @default("setup") // setup, reset
+  tipo        String    @default("setup")
   usado       Boolean   @default(false)
   expira_en   DateTime  @db.Timestamptz(6)
   creado_en   DateTime  @default(now()) @db.Timestamptz(6)
   ip_creacion String?
-  usado_en    DateTime? @db.Timestamptz(6)
   ip_uso      String?
+  usado_en    DateTime? @db.Timestamptz(6)
   cliente     clientes  @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
 
   @@index([token], map: "idx_token_config_token")
@@ -508,8 +503,8 @@ model token_configuracion {
 model sesion_refresh {
   id           BigInt   @id @default(autoincrement())
   token_hash   String   @unique
-  usuario_tipo String // cliente, admin
-  usuario_id   String // cliente.id or perfiles.id
+  usuario_tipo String
+  usuario_id   String
   expira_en    DateTime @db.Timestamptz(6)
   revocado     Boolean  @default(false)
   creado_en    DateTime @default(now()) @db.Timestamptz(6)
@@ -521,13 +516,13 @@ model sesion_refresh {
 /// Audit log for compliance and debugging
 model log_auditoria {
   id               BigInt   @id @default(autoincrement())
-  accion           String // REGISTRO_PAGO, DESBLOQUEO_CUENTA, etc.
-  entidad          String // cliente, transaccion_pago, etc.
+  accion           String
+  entidad          String
   entidad_id       BigInt?
-  usuario_tipo     String // admin, cliente, system
+  usuario_tipo     String
   usuario_email    String?
-  datos_anteriores Json?    @db.JsonB
-  datos_nuevos     Json?    @db.JsonB
+  datos_anteriores Json?
+  datos_nuevos     Json?
   ip_address       String?
   user_agent       String?
   creado_en        DateTime @default(now()) @db.Timestamptz(6)
@@ -541,11 +536,54 @@ model log_auditoria {
 model notificaciones_sistema {
   id        BigInt   @id @default(autoincrement())
   mensaje   String
-  tipo      String   @default("info") // info, warning, critical
+  tipo      String   @default("info")
   activo    Boolean  @default(true)
   desde     DateTime @db.Timestamptz(6)
   hasta     DateTime @db.Timestamptz(6)
   creado_en DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([activo, desde, hasta], map: "idx_notificaciones_activas")
+}
+
+model cortes_servicio {
+  id                        BigInt    @id @default(autoincrement())
+  cliente_id                BigInt
+  numero_cliente            String    @db.VarChar(20)
+  fecha_corte               DateTime  @db.Date
+  motivo_corte              String    @db.VarChar(255)
+  autorizado_corte_por      String?   @db.VarChar(100)
+  fecha_reposicion          DateTime? @db.Date
+  autorizado_reposicion_por String?   @db.VarChar(100)
+  numero_reposicion         Int       @default(1)
+  monto_cobrado             Decimal?  @db.Decimal(10, 2)
+  afecto_iva                Boolean   @default(true)
+  estado                    String    @default("cortado") @db.VarChar(20)
+  boleta_aplicada_id        BigInt?
+  observaciones             String?
+  created_at                DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime  @default(now()) @db.Timestamptz(6)
+  boletas                   boletas?  @relation(fields: [boleta_aplicada_id], references: [id], onUpdate: NoAction)
+  clientes                  clientes  @relation(fields: [cliente_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([boleta_aplicada_id], map: "idx_cortes_boleta")
+  @@index([cliente_id], map: "idx_cortes_cliente_id")
+  @@index([estado], map: "idx_cortes_estado")
+}
+
+/// Saved payment cards for Transbank OneClick and other providers
+model tarjetas_guardadas {
+  id              BigInt   @id @default(autoincrement())
+  cliente_id      BigInt
+  proveedor       String   @db.VarChar(50) // 'transbank_oneclick'
+  tbk_user        String   @db.VarChar(255) // Transbank user token
+  tbk_token       String   @db.VarChar(255) // Encrypted authorization code
+  ultimos_digitos String?  @db.VarChar(4) // Last 4 digits for display
+  tipo_tarjeta    String?  @db.VarChar(20) // visa, mastercard
+  activa          Boolean  @default(true)
+  creado_en       DateTime @default(now()) @db.Timestamptz(6)
+  actualizado_en  DateTime @default(now()) @db.Timestamptz(6)
+  cliente         clientes @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+
+  @@unique([cliente_id, tbk_user])
+  @@index([cliente_id], map: "idx_tarjetas_cliente")
 }

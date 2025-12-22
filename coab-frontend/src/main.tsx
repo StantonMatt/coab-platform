@@ -10,6 +10,7 @@ import BoletaDetailPage from './pages/BoletaDetail';
 import SetupPage from './pages/Setup';
 import RecuperarPage from './pages/Recuperar';
 import PaymentResultPage from './pages/PaymentResult';
+import TransbankCallbackPage from './pages/TransbankCallback';
 import AdminLoginPage from './pages/admin/Login';
 import AdminDashboardPage from './pages/admin/Dashboard';
 import AdminCustomersPage from './pages/admin/Customers';
@@ -46,6 +47,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/boletas/:id" element={<BoletaDetailPage />} />
           <Route path="/setup/:token" element={<SetupPage />} />
           <Route path="/pago/resultado" element={<PaymentResultPage />} />
+          <Route path="/transbank/callback" element={<TransbankCallbackPage />} />
           <Route path="/" element={<Navigate to="/login" replace />} />
           
           {/* Admin Portal */}

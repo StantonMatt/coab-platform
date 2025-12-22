@@ -1,12 +1,12 @@
 /**
  * PaymentModal Component
- * Embedded payment modal using Mercado Pago Card Payment Brick
+ * Multi-provider payment modal supporting Mercado Pago and Transbank OneClick
  */
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { CardPayment, initMercadoPago } from '@mercadopago/sdk-react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
   DialogContent,
@@ -24,7 +24,14 @@ import apiClient from '@/lib/api';
 import { formatearPesos } from '@coab/utils';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Loader2, CreditCard, AlertCircle, CheckCircle2 } from 'lucide-react';
+import {
+  Loader2,
+  CreditCard,
+  AlertCircle,
+  CheckCircle2,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 
 interface Boleta {
   id: string;
@@ -33,14 +40,29 @@ interface Boleta {
   periodoHasta: string;
   fechaEmision: string;
   fechaVencimiento: string;
-  montoTotal: number; // Monthly charge for this period
-  montoAdeudado: number; // What's actually still owed
-  parcialmentePagada: boolean; // Is this boleta partially paid?
+  montoTotal: number;
+  montoAdeudado: number;
+  parcialmentePagada: boolean;
+}
+
+interface SavedCard {
+  id: string;
+  ultimosDigitos: string | null;
+  tipoTarjeta: string | null;
+  creadoEn: string;
 }
 
 interface PaymentConfig {
-  publicKey: string;
-  enabled: boolean;
+  mercadopago: {
+    enabled: boolean;
+    publicKey: string | null;
+  };
+  transbank: {
+    enabled: boolean;
+    isProduction: boolean;
+    hasCards: boolean;
+    tarjetas: SavedCard[];
+  };
 }
 
 interface PaymentModalProps {
@@ -50,7 +72,9 @@ interface PaymentModalProps {
   onPaymentSuccess?: () => void;
 }
 
-type PaymentOption = 'total' | 'boletas' | 'custom';
+type PaymentProvider = 'mercadopago' | 'transbank';
+type AmountOption = 'total' | 'boletas' | 'custom';
+type Step = 'provider' | 'amount' | 'payment' | 'processing' | 'result';
 
 export default function PaymentModal({
   isOpen,
@@ -60,10 +84,15 @@ export default function PaymentModal({
 }: PaymentModalProps) {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [step, setStep] = useState<'select' | 'payment' | 'processing' | 'result'>('select');
-  const [paymentOption, setPaymentOption] = useState<PaymentOption>('total');
+  const queryClient = useQueryClient();
+
+  // State
+  const [step, setStep] = useState<Step>('provider');
+  const [paymentProvider, setPaymentProvider] = useState<PaymentProvider>('mercadopago');
+  const [amountOption, setAmountOption] = useState<AmountOption>('total');
   const [customAmount, setCustomAmount] = useState('');
   const [selectedBoletas, setSelectedBoletas] = useState<Set<string>>(new Set());
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [mpInitialized, setMpInitialized] = useState(false);
   const [paymentResult, setPaymentResult] = useState<{
     success: boolean;
@@ -94,28 +123,36 @@ export default function PaymentModal({
 
   // Initialize Mercado Pago when config is available
   useEffect(() => {
-    if (configData?.publicKey && !mpInitialized) {
-      initMercadoPago(configData.publicKey, { locale: 'es-CL' });
+    if (configData?.mercadopago?.publicKey && !mpInitialized) {
+      initMercadoPago(configData.mercadopago.publicKey, { locale: 'es-CL' });
       setMpInitialized(true);
     }
-  }, [configData?.publicKey, mpInitialized]);
+  }, [configData?.mercadopago?.publicKey, mpInitialized]);
+
+  // Auto-select first card if available
+  useEffect(() => {
+    if (configData?.transbank?.tarjetas?.length && !selectedCardId) {
+      setSelectedCardId(configData.transbank.tarjetas[0].id);
+    }
+  }, [configData?.transbank?.tarjetas, selectedCardId]);
 
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
-      setStep('select');
-      setPaymentOption('total');
+      setStep('provider');
+      setPaymentProvider('mercadopago');
+      setAmountOption('total');
       setCustomAmount('');
       setSelectedBoletas(new Set());
       setPaymentResult(null);
     }
   }, [isOpen]);
 
-  // Payment mutation
-  const paymentMutation = useMutation({
+  // Mercado Pago payment mutation
+  const mpPaymentMutation = useMutation({
     mutationFn: async (cardPaymentData: any) => {
       const amount = calculateAmount();
-      const boletaIds = paymentOption === 'boletas' ? Array.from(selectedBoletas) : undefined;
+      const boletaIds = amountOption === 'boletas' ? Array.from(selectedBoletas) : undefined;
 
       const res = await apiClient.post('/pagos/mercadopago', {
         monto: amount,
@@ -125,37 +162,112 @@ export default function PaymentModal({
       });
       return res.data;
     },
+    onSuccess: handlePaymentSuccess,
+    onError: handlePaymentError,
+  });
+
+  // Transbank payment mutation
+  const tbkPaymentMutation = useMutation({
+    mutationFn: async () => {
+      const amount = calculateAmount();
+      const res = await apiClient.post('/pagos/transbank/autorizar', {
+        tarjetaId: selectedCardId,
+        monto: amount,
+        descripcion: 'Pago de servicios COAB',
+      });
+      return res.data;
+    },
+    onSuccess: handlePaymentSuccess,
+    onError: handlePaymentError,
+  });
+
+  // Transbank card registration mutation
+  const tbkInscriptionMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post('/pagos/transbank/inscribir');
+      return res.data as { success: boolean; urlWebpay: string; token: string };
+    },
     onSuccess: (data) => {
-      if (data.success) {
-        setPaymentResult({
-          success: true,
-          message: data.mensaje || 'Pago aprobado exitosamente',
-          transaccionId: data.transaccionId,
-        });
-        setStep('result');
-        onPaymentSuccess?.();
-      } else {
-        setPaymentResult({
-          success: false,
-          message: data.mensaje || 'El pago no fue aprobado',
-          transaccionId: data.transaccionId,
-        });
-        setStep('result');
+      if (data.success && data.urlWebpay && data.token) {
+        // Store token for later confirmation
+        sessionStorage.setItem('tbk_inscription_token', data.token);
+        
+        // Transbank requires POST form submission with TBK_TOKEN
+        // Create a hidden form and submit it
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = data.urlWebpay;
+        
+        const tokenInput = document.createElement('input');
+        tokenInput.type = 'hidden';
+        tokenInput.name = 'TBK_TOKEN';
+        tokenInput.value = data.token;
+        form.appendChild(tokenInput);
+        
+        document.body.appendChild(form);
+        form.submit();
       }
     },
     onError: (error: any) => {
-      const message = error.response?.data?.error?.message || 'Error al procesar el pago';
-      setPaymentResult({
-        success: false,
-        message,
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'Error al registrar tarjeta',
       });
-      setStep('result');
     },
   });
 
+  // Transbank card deletion mutation
+  const tbkDeleteCardMutation = useMutation({
+    mutationFn: async (cardId: string) => {
+      const res = await apiClient.delete(`/pagos/transbank/eliminar/${cardId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast({ title: 'Tarjeta eliminada', description: 'La tarjeta fue eliminada exitosamente' });
+      queryClient.invalidateQueries({ queryKey: ['payment-config'] });
+      setSelectedCardId(null);
+    },
+    onError: (error: any) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'Error al eliminar tarjeta',
+      });
+    },
+  });
+
+  function handlePaymentSuccess(data: any) {
+    if (data.success) {
+      setPaymentResult({
+        success: true,
+        message: data.mensaje || 'Pago aprobado exitosamente',
+        transaccionId: data.transaccionId,
+      });
+      setStep('result');
+      onPaymentSuccess?.();
+    } else {
+      setPaymentResult({
+        success: false,
+        message: data.mensaje || 'El pago no fue aprobado',
+        transaccionId: data.transaccionId,
+      });
+      setStep('result');
+    }
+  }
+
+  function handlePaymentError(error: any) {
+    const message = error.response?.data?.error?.message || 'Error al procesar el pago';
+    setPaymentResult({
+      success: false,
+      message,
+    });
+    setStep('result');
+  }
+
   // Calculate the payment amount based on selection
   const calculateAmount = (): number => {
-    switch (paymentOption) {
+    switch (amountOption) {
       case 'total':
         return boletasData?.total || saldo;
       case 'boletas':
@@ -171,14 +283,32 @@ export default function PaymentModal({
     }
   };
 
-  // Handle card payment submission from Mercado Pago Brick
-  const handlePaymentSubmit = async (cardPaymentData: any) => {
+  // Handle Mercado Pago card submission
+  const handleMPPaymentSubmit = async (cardPaymentData: any) => {
     setStep('processing');
-    await paymentMutation.mutateAsync(cardPaymentData);
+    await mpPaymentMutation.mutateAsync(cardPaymentData);
   };
 
-  // Continue to payment step
-  const handleContinue = () => {
+  // Handle Transbank OneClick payment
+  const handleTransbankPayment = async () => {
+    if (!selectedCardId) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Selecciona una tarjeta guardada',
+      });
+      return;
+    }
+    setStep('processing');
+    await tbkPaymentMutation.mutateAsync();
+  };
+
+  // Continue to next step
+  const handleContinueToAmount = () => {
+    setStep('amount');
+  };
+
+  const handleContinueToPayment = () => {
     const amount = calculateAmount();
     if (amount <= 0) {
       toast({
@@ -200,8 +330,12 @@ export default function PaymentModal({
   const amount = calculateAmount();
   const isLoading = configLoading || boletasLoading;
 
-  // If MP not available
-  if (isOpen && !configLoading && !configData?.enabled) {
+  // Check if any payment method is available
+  const hasAnyProvider =
+    configData?.mercadopago?.enabled || configData?.transbank?.enabled;
+
+  // If no providers available
+  if (isOpen && !configLoading && !hasAnyProvider) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
         <DialogContent className="sm:max-w-md">
@@ -231,15 +365,17 @@ export default function PaymentModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CreditCard className="h-5 w-5 text-blue-600" />
-            {step === 'select' && 'Pagar Cuenta'}
+            {step === 'provider' && 'Método de Pago'}
+            {step === 'amount' && 'Seleccionar Monto'}
             {step === 'payment' && 'Información de Pago'}
             {step === 'processing' && 'Procesando Pago...'}
             {step === 'result' && (paymentResult?.success ? 'Pago Exitoso' : 'Pago No Aprobado')}
           </DialogTitle>
-          {step === 'select' && (
-            <DialogDescription>
-              Selecciona cuánto deseas pagar
-            </DialogDescription>
+          {step === 'provider' && (
+            <DialogDescription>Elige cómo deseas pagar</DialogDescription>
+          )}
+          {step === 'amount' && (
+            <DialogDescription>Selecciona cuánto deseas pagar</DialogDescription>
           )}
         </DialogHeader>
 
@@ -251,12 +387,154 @@ export default function PaymentModal({
           </div>
         )}
 
-        {/* Step 1: Select Amount */}
-        {!isLoading && step === 'select' && (
+        {/* Step 1: Select Payment Provider */}
+        {!isLoading && step === 'provider' && (
+          <div className="space-y-4 py-4">
+            <RadioGroup
+              value={paymentProvider}
+              onValueChange={(v) => setPaymentProvider(v as PaymentProvider)}
+              className="space-y-3"
+            >
+              {/* Mercado Pago Option */}
+              {configData?.mercadopago?.enabled && (
+                <div
+                  className={`p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                    paymentProvider === 'mercadopago'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                  onClick={() => setPaymentProvider('mercadopago')}
+                >
+                  <div className="flex items-center gap-3">
+                    <RadioGroupItem value="mercadopago" id="mercadopago" />
+                    <Label htmlFor="mercadopago" className="flex-1 cursor-pointer">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Mercado Pago</span>
+                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                          Recomendado
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Paga con tarjeta de crédito o débito
+                      </p>
+                    </Label>
+                  </div>
+                </div>
+              )}
+
+              {/* Transbank OneClick Option */}
+              {configData?.transbank?.enabled && (
+                <div
+                  className={`p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                    paymentProvider === 'transbank'
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                  onClick={() => setPaymentProvider('transbank')}
+                >
+                  <div className="flex items-center gap-3">
+                    <RadioGroupItem value="transbank" id="transbank" />
+                    <Label htmlFor="transbank" className="flex-1 cursor-pointer">
+                      <div className="font-medium">Transbank OneClick</div>
+                      <p className="text-sm text-slate-500 mt-1">
+                        {configData.transbank.hasCards
+                          ? 'Paga con un click usando tu tarjeta guardada'
+                          : 'Registra tu tarjeta para pagos rápidos'}
+                      </p>
+                    </Label>
+                  </div>
+
+                  {/* Saved Cards */}
+                  {paymentProvider === 'transbank' && configData.transbank.tarjetas.length > 0 && (
+                    <div className="mt-4 ml-7 space-y-2">
+                      <p className="text-xs text-slate-500 font-medium">Tarjetas guardadas:</p>
+                      {configData.transbank.tarjetas.map((card) => (
+                        <div
+                          key={card.id}
+                          className={`flex items-center justify-between p-2 rounded border ${
+                            selectedCardId === card.id
+                              ? 'border-blue-400 bg-blue-50'
+                              : 'border-slate-200'
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            className="flex items-center gap-2 flex-1 text-left"
+                            onClick={() => setSelectedCardId(card.id)}
+                          >
+                            <CreditCard className="h-4 w-4 text-slate-500" />
+                            <span className="text-sm">
+                              {card.tipoTarjeta?.toUpperCase() || 'Tarjeta'} ****{' '}
+                              {card.ultimosDigitos || '****'}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="p-1 text-slate-400 hover:text-red-500"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm('¿Eliminar esta tarjeta?')) {
+                                tbkDeleteCardMutation.mutate(card.id);
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add New Card Button */}
+                  {paymentProvider === 'transbank' && (
+                    <div className="mt-3 ml-7">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => tbkInscriptionMutation.mutate()}
+                        disabled={tbkInscriptionMutation.isPending}
+                      >
+                        {tbkInscriptionMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : (
+                          <Plus className="h-4 w-4 mr-2" />
+                        )}
+                        Agregar Nueva Tarjeta
+                      </Button>
+                      <p className="text-xs text-slate-400 mt-1 text-center">
+                        Serás redirigido a Transbank para registrar tu tarjeta
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </RadioGroup>
+
+            <div className="flex gap-3 pt-2">
+              <Button variant="outline" onClick={onClose} className="flex-1">
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleContinueToAmount}
+                disabled={
+                  paymentProvider === 'transbank' &&
+                  !configData?.transbank?.hasCards
+                }
+                className="flex-1 bg-blue-600 hover:bg-blue-700"
+              >
+                Continuar
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Select Amount */}
+        {!isLoading && step === 'amount' && (
           <div className="space-y-6 py-4">
             <RadioGroup
-              value={paymentOption}
-              onValueChange={(v) => setPaymentOption(v as PaymentOption)}
+              value={amountOption}
+              onValueChange={(v) => setAmountOption(v as AmountOption)}
               className="space-y-3"
             >
               {/* Pay Total */}
@@ -280,15 +558,14 @@ export default function PaymentModal({
                     </Label>
                   </div>
 
-                  {paymentOption === 'boletas' && (
+                  {amountOption === 'boletas' && (
                     <div className="space-y-2 ml-7 mt-3">
                       <p className="text-xs text-slate-500 mb-2">
                         Los pagos se aplican en orden (más antiguo primero)
                       </p>
                       {boletasData.boletas
-                        .filter((b) => b.montoAdeudado > 0) // Only show boletas with amount owed
+                        .filter((b) => b.montoAdeudado > 0)
                         .map((boleta, index, filteredBoletas) => {
-                          // FIFO enforcement: can only select if all previous boletas are selected
                           const previousBoletas = filteredBoletas.slice(0, index);
                           const allPreviousSelected = previousBoletas.every((b) =>
                             selectedBoletas.has(b.id)
@@ -308,14 +585,12 @@ export default function PaymentModal({
                                 disabled={isDisabled}
                                 onCheckedChange={() => {
                                   if (isDisabled) return;
-                                  // When unchecking, also uncheck all newer boletas
                                   if (selectedBoletas.has(boleta.id)) {
                                     const newerBoletas = filteredBoletas.slice(index);
                                     const newSelected = new Set(selectedBoletas);
                                     newerBoletas.forEach((b) => newSelected.delete(b.id));
                                     setSelectedBoletas(newSelected);
                                   } else {
-                                    // When checking, also check all older boletas
                                     const olderBoletas = filteredBoletas.slice(0, index + 1);
                                     const newSelected = new Set(selectedBoletas);
                                     olderBoletas.forEach((b) => newSelected.add(b.id));
@@ -379,7 +654,7 @@ export default function PaymentModal({
                   </Label>
                 </div>
 
-                {paymentOption === 'custom' && (
+                {amountOption === 'custom' && (
                   <div className="ml-7 mt-3">
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
@@ -413,22 +688,22 @@ export default function PaymentModal({
             </div>
 
             <div className="flex gap-3">
-              <Button variant="outline" onClick={onClose} className="flex-1">
-                Cancelar
+              <Button variant="outline" onClick={() => setStep('provider')} className="flex-1">
+                ← Volver
               </Button>
               <Button
-                onClick={handleContinue}
+                onClick={handleContinueToPayment}
                 disabled={amount <= 0}
                 className="flex-1 bg-blue-600 hover:bg-blue-700"
               >
-                Continuar al Pago
+                Continuar
               </Button>
             </div>
           </div>
         )}
 
-        {/* Step 2: Card Payment Brick */}
-        {!isLoading && step === 'payment' && mpInitialized && (
+        {/* Step 3: Payment */}
+        {!isLoading && step === 'payment' && (
           <div className="py-4">
             <div className="bg-slate-50 p-3 rounded-lg mb-4">
               <div className="flex justify-between items-center">
@@ -439,35 +714,72 @@ export default function PaymentModal({
               </div>
             </div>
 
-            <CardPayment
-              initialization={{ amount }}
-              onSubmit={handlePaymentSubmit}
-              onReady={() => {
-                console.log('CardPayment Brick ready');
-              }}
-              onError={(error) => {
-                console.error('CardPayment error:', error);
-                toast({
-                  variant: 'destructive',
-                  title: 'Error',
-                  description: 'Error al cargar el formulario de pago',
-                });
-              }}
-              customization={{
-                paymentMethods: {
-                  maxInstallments: 6,
-                },
-                visual: {
-                  style: {
-                    theme: 'default',
-                  },
-                },
-              }}
-            />
+            {/* Mercado Pago Card Payment */}
+            {paymentProvider === 'mercadopago' && mpInitialized && (
+              <>
+                <CardPayment
+                  initialization={{ amount }}
+                  onSubmit={handleMPPaymentSubmit}
+                  onReady={() => console.log('CardPayment Brick ready')}
+                  onError={(error) => {
+                    console.error('CardPayment error:', error);
+                    toast({
+                      variant: 'destructive',
+                      title: 'Error',
+                      description: 'Error al cargar el formulario de pago',
+                    });
+                  }}
+                  customization={{
+                    paymentMethods: { maxInstallments: 6 },
+                    visual: { style: { theme: 'default' } },
+                  }}
+                />
+              </>
+            )}
+
+            {/* Transbank OneClick Payment */}
+            {paymentProvider === 'transbank' && (
+              <div className="space-y-4">
+                {configData?.transbank?.tarjetas && selectedCardId && (
+                  <div className="p-4 border rounded-lg bg-slate-50">
+                    <p className="text-sm text-slate-600 mb-2">Tarjeta seleccionada:</p>
+                    {(() => {
+                      const card = configData.transbank.tarjetas.find(
+                        (c) => c.id === selectedCardId
+                      );
+                      return card ? (
+                        <div className="flex items-center gap-3">
+                          <CreditCard className="h-8 w-8 text-slate-400" />
+                          <div>
+                            <p className="font-medium">
+                              {card.tipoTarjeta?.toUpperCase() || 'Tarjeta'} ****{' '}
+                              {card.ultimosDigitos || '****'}
+                            </p>
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
+                )}
+
+                <Button
+                  onClick={handleTransbankPayment}
+                  className="w-full bg-blue-600 hover:bg-blue-700 h-12"
+                  disabled={tbkPaymentMutation.isPending}
+                >
+                  {tbkPaymentMutation.isPending ? (
+                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                  ) : (
+                    <CreditCard className="h-5 w-5 mr-2" />
+                  )}
+                  Pagar {formatearPesos(amount)}
+                </Button>
+              </div>
+            )}
 
             <Button
               variant="ghost"
-              onClick={() => setStep('select')}
+              onClick={() => setStep('amount')}
               className="w-full mt-4"
             >
               ← Volver
@@ -475,7 +787,7 @@ export default function PaymentModal({
           </div>
         )}
 
-        {/* Step 3: Processing */}
+        {/* Step 4: Processing */}
         {step === 'processing' && (
           <div className="py-12 text-center">
             <Loader2 className="h-12 w-12 animate-spin mx-auto text-blue-600" />
@@ -488,7 +800,7 @@ export default function PaymentModal({
           </div>
         )}
 
-        {/* Step 4: Result */}
+        {/* Step 5: Result */}
         {step === 'result' && paymentResult && (
           <div className="py-8 text-center">
             {paymentResult.success ? (
@@ -496,9 +808,7 @@ export default function PaymentModal({
                 <div className="h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
                   <CheckCircle2 className="h-10 w-10 text-green-600" />
                 </div>
-                <h3 className="mt-4 text-xl font-bold text-slate-900">
-                  ¡Pago Exitoso!
-                </h3>
+                <h3 className="mt-4 text-xl font-bold text-slate-900">¡Pago Exitoso!</h3>
                 <p className="mt-2 text-slate-600">{paymentResult.message}</p>
                 {paymentResult.transaccionId && (
                   <p className="mt-2 text-sm text-slate-500">
@@ -511,20 +821,14 @@ export default function PaymentModal({
                 <div className="h-16 w-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
                   <AlertCircle className="h-10 w-10 text-red-600" />
                 </div>
-                <h3 className="mt-4 text-xl font-bold text-slate-900">
-                  Pago No Aprobado
-                </h3>
+                <h3 className="mt-4 text-xl font-bold text-slate-900">Pago No Aprobado</h3>
                 <p className="mt-2 text-slate-600">{paymentResult.message}</p>
               </>
             )}
 
             <div className="mt-6 flex gap-3">
               {!paymentResult.success && (
-                <Button
-                  variant="outline"
-                  onClick={() => setStep('payment')}
-                  className="flex-1"
-                >
+                <Button variant="outline" onClick={() => setStep('payment')} className="flex-1">
                   Reintentar
                 </Button>
               )}
@@ -546,4 +850,3 @@ export default function PaymentModal({
     </Dialog>
   );
 }
-

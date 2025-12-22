@@ -26,6 +26,11 @@ const envSchema = z.object({
   MERCADOPAGO_ACCESS_TOKEN: z.string().optional(),
   MERCADOPAGO_PUBLIC_KEY: z.string().optional(),
 
+  // Optional: Transbank OneClick
+  TRANSBANK_COMMERCE_CODE: z.string().optional(),
+  TRANSBANK_API_KEY: z.string().optional(),
+  TRANSBANK_ENVIRONMENT: z.enum(['integration', 'production']).default('integration'),
+
   // Optional: Sentry
   SENTRY_DSN: z.string().url().optional(),
 

@@ -6,8 +6,10 @@
 import { FastifyPluginAsync } from 'fastify';
 import { z, ZodError } from 'zod';
 import * as mercadopagoService from '../services/mercadopago.service.js';
+import * as transbankService from '../services/transbank.service.js';
 import { requireCliente } from '../middleware/auth.middleware.js';
 import prisma from '../lib/prisma.js';
+import { env } from '../config/env.js';
 
 // Schema for creating a payment
 const createPaymentSchema = z.object({
@@ -32,27 +34,45 @@ const createPaymentSchema = z.object({
   idempotencyKey: z.string().optional(),
 });
 
+// Schema for Transbank OneClick authorization
+const transbankAuthorizeSchema = z.object({
+  tarjetaId: z.string().min(1, 'ID de tarjeta requerido'),
+  monto: z.number().positive('El monto debe ser mayor a 0'),
+  descripcion: z.string().optional().default('Pago de servicios COAB'),
+});
+
+// Schema for Transbank confirmation
+const transbankConfirmSchema = z.object({
+  token: z.string().min(1, 'Token requerido'),
+});
+
 const paymentRoutes: FastifyPluginAsync = async (fastify) => {
   // All routes require customer authentication
   fastify.addHook('preHandler', requireCliente);
 
   /**
    * GET /pagos/config
-   * Get Mercado Pago configuration (public key)
+   * Get payment configuration for all providers
    */
-  fastify.get('/config', async (_request, reply) => {
-    if (!mercadopagoService.isConfigured()) {
-      return reply.code(503).send({
-        error: {
-          code: 'MP_NOT_CONFIGURED',
-          message: 'Pagos en línea no disponibles momentáneamente',
-        },
-      });
-    }
+  fastify.get('/config', async (request) => {
+    const clienteId = BigInt(request.user!.userId.toString());
+
+    // Get Transbank saved cards for this customer
+    const transbankCards = await transbankService.getCustomerCards(clienteId);
 
     return {
-      publicKey: mercadopagoService.getPublicKey(),
-      enabled: true,
+      // Mercado Pago configuration
+      mercadopago: {
+        enabled: mercadopagoService.isConfigured(),
+        publicKey: mercadopagoService.getPublicKey(),
+      },
+      // Transbank OneClick configuration
+      transbank: {
+        enabled: transbankService.isConfigured(),
+        isProduction: transbankService.isProduction(),
+        hasCards: transbankCards.length > 0,
+        tarjetas: transbankCards,
+      },
     };
   });
 
@@ -295,6 +315,262 @@ const paymentRoutes: FastifyPluginAsync = async (fastify) => {
       pagination: { hasNextPage, nextCursor },
     };
   });
+
+  // =============================================
+  // TRANSBANK ONECLICK ROUTES
+  // =============================================
+
+  /**
+   * GET /pagos/transbank/tarjetas
+   * Get customer's saved Transbank cards
+   */
+  fastify.get('/transbank/tarjetas', async (request) => {
+    const clienteId = BigInt(request.user!.userId.toString());
+    const cards = await transbankService.getCustomerCards(clienteId);
+
+    return {
+      tarjetas: cards,
+      hasCards: cards.length > 0,
+    };
+  });
+
+  /**
+   * POST /pagos/transbank/inscribir
+   * Start card inscription process
+   */
+  fastify.post(
+    '/transbank/inscribir',
+    {
+      config: {
+        rateLimit: {
+          max: env.NODE_ENV === 'development' ? 100 : 5, // Dev mode bypass
+          timeWindow: env.NODE_ENV === 'development' ? '1 minute' : '15 minutes',
+          keyGenerator: (req) => `tbk-inscribir-${req.user?.userId || req.ip}`,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const clienteId = BigInt(request.user!.userId.toString());
+
+        // Get customer email
+        const cliente = await prisma.clientes.findUnique({
+          where: { id: clienteId },
+          select: { correo: true },
+        });
+
+        const email = cliente?.correo || 'cliente@coab.cl';
+
+        const result = await transbankService.startInscription(
+          clienteId,
+          email,
+          fastify.log
+        );
+
+        if (!result.success) {
+          return reply.code(400).send({
+            error: {
+              code: 'INSCRIPTION_FAILED',
+              message: result.error || 'Error al iniciar inscripción',
+            },
+          });
+        }
+
+        return {
+          success: true,
+          token: result.token,
+          urlWebpay: result.urlWebpay,
+        };
+      } catch (error: any) {
+        fastify.log.error(error, 'Transbank inscription start error');
+
+        return reply.code(500).send({
+          error: {
+            code: 'INSCRIPTION_ERROR',
+            message: error.message || 'Error al iniciar inscripción',
+          },
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /pagos/transbank/confirmar
+   * Finish card inscription after redirect
+   */
+  fastify.post('/transbank/confirmar', async (request, reply) => {
+    try {
+      const data = transbankConfirmSchema.parse(request.body);
+      const clienteId = BigInt(request.user!.userId.toString());
+
+      const result = await transbankService.finishInscription(
+        clienteId,
+        data.token,
+        fastify.log
+      );
+
+      if (!result.success) {
+        return reply.code(400).send({
+          error: {
+            code: 'INSCRIPTION_FAILED',
+            message: result.error || 'Error al completar inscripción',
+            responseCode: result.responseCode,
+          },
+        });
+      }
+
+      return {
+        success: true,
+        tarjetaId: result.tarjetaId,
+        ultimosDigitos: result.ultimosDigitos,
+        tipoTarjeta: result.tipoTarjeta,
+      };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: error.errors[0].message,
+          },
+        });
+      }
+
+      fastify.log.error(error, 'Transbank inscription finish error');
+
+      return reply.code(500).send({
+        error: {
+          code: 'INSCRIPTION_ERROR',
+          message: error.message || 'Error al completar inscripción',
+        },
+      });
+    }
+  });
+
+  /**
+   * POST /pagos/transbank/autorizar
+   * Make a one-click payment with saved card
+   */
+  fastify.post(
+    '/transbank/autorizar',
+    {
+      config: {
+        rateLimit: {
+          max: 10, // 10 payment attempts per 15 minutes
+          timeWindow: '15 minutes',
+          keyGenerator: (req) => `tbk-autorizar-${req.user?.userId || req.ip}`,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const data = transbankAuthorizeSchema.parse(request.body);
+        const clienteId = BigInt(request.user!.userId.toString());
+
+        // Validate amount against pending balance
+        const pendingData = await mercadopagoService.getCustomerPendingBoletas(clienteId);
+        const totalPending = pendingData.saldoActual;
+
+        // Don't allow overpayment beyond balance (prevent fraud)
+        if (data.monto > totalPending * 1.5) {
+          return reply.code(400).send({
+            error: {
+              code: 'AMOUNT_TOO_HIGH',
+              message: 'El monto excede significativamente el saldo pendiente',
+            },
+          });
+        }
+
+        const result = await transbankService.authorizePayment(
+          clienteId,
+          data.tarjetaId,
+          data.monto,
+          data.descripcion,
+          request.ip,
+          fastify.log
+        );
+
+        if (!result.success) {
+          return reply.code(400).send({
+            error: {
+              code: 'PAYMENT_FAILED',
+              message: result.mensaje,
+              estado: result.estado,
+              estadoDetalle: result.estadoDetalle,
+            },
+            transaccionId: result.transaccionOnlineId,
+          });
+        }
+
+        return {
+          success: true,
+          transaccionId: result.transaccionOnlineId,
+          buyOrder: result.buyOrder,
+          authorizationCode: result.authorizationCode,
+          estado: result.estado,
+          mensaje: result.mensaje,
+          saldoNuevo: result.saldoNuevo,
+        };
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: error.errors[0].message,
+            },
+          });
+        }
+
+        fastify.log.error(error, 'Transbank payment error');
+
+        return reply.code(500).send({
+          error: {
+            code: 'PAYMENT_ERROR',
+            message: error.message || 'Error al procesar el pago',
+          },
+        });
+      }
+    }
+  );
+
+  /**
+   * DELETE /pagos/transbank/eliminar/:id
+   * Remove a saved card
+   */
+  fastify.delete<{ Params: { id: string } }>(
+    '/transbank/eliminar/:id',
+    async (request, reply) => {
+      try {
+        const { id } = request.params;
+        const clienteId = BigInt(request.user!.userId.toString());
+
+        const result = await transbankService.removeCard(
+          clienteId,
+          id,
+          fastify.log
+        );
+
+        if (!result.success) {
+          return reply.code(400).send({
+            error: {
+              code: 'REMOVE_FAILED',
+              message: result.error || 'Error al eliminar tarjeta',
+            },
+          });
+        }
+
+        return { success: true };
+      } catch (error: any) {
+        fastify.log.error(error, 'Remove card error');
+
+        return reply.code(500).send({
+          error: {
+            code: 'REMOVE_ERROR',
+            message: error.message || 'Error al eliminar tarjeta',
+          },
+        });
+      }
+    }
+  );
 };
 
 export default paymentRoutes;
