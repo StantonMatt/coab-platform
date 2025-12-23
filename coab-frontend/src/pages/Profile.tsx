@@ -57,7 +57,7 @@ const updateProfileSchema = z.object({
     .or(z.literal('')),
   telefono: z
     .string()
-    .regex(/^(\+?56)?[0-9]{8,9}$/, 'Teléfono inválido (ej: +56912345678)')
+    .regex(/^[0-9]{9}$/, 'Debe tener 9 dígitos (ej: 912345678)')
     .optional()
     .or(z.literal('')),
 });
@@ -158,11 +158,19 @@ export default function ProfilePage() {
   });
 
   // Set initial form values when profile loads
+  // Strip +56 prefix from phone for display (user only sees 9 digits)
   useEffect(() => {
     if (profile) {
+      let telefono = profile.telefono || '';
+      // Remove +56 or 56 prefix if present
+      if (telefono.startsWith('+56')) {
+        telefono = telefono.slice(3);
+      } else if (telefono.startsWith('56') && telefono.length > 9) {
+        telefono = telefono.slice(2);
+      }
       profileForm.reset({
         correo: profile.email || '',
-        telefono: profile.telefono || '',
+        telefono: telefono,
       });
     }
   }, [profile, profileForm]);
@@ -260,7 +268,12 @@ export default function ProfilePage() {
       });
       return;
     }
-    updateProfileMutation.mutate(data);
+    // Prepend +56 to phone number before sending
+    const submitData = {
+      ...data,
+      telefono: data.telefono ? `+56${data.telefono}` : undefined,
+    };
+    updateProfileMutation.mutate(submitData);
   };
 
   const handlePasswordSubmit = (data: ChangePasswordForm) => {
@@ -341,13 +354,19 @@ export default function ProfilePage() {
 
               <div className="space-y-2">
                 <Label htmlFor="telefono">Teléfono</Label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <div className="flex">
+                  {/* Fixed +56 prefix */}
+                  <div className="flex items-center px-3 bg-gray-100 border border-r-0 rounded-l-md text-gray-600 text-sm font-medium">
+                    <Phone className="h-4 w-4 mr-2 text-gray-400" />
+                    +56
+                  </div>
                   <Input
                     id="telefono"
                     type="tel"
-                    placeholder="+56912345678"
-                    className="pl-10"
+                    inputMode="numeric"
+                    placeholder="912345678"
+                    maxLength={9}
+                    className="rounded-l-none"
                     {...profileForm.register('telefono')}
                   />
                 </div>

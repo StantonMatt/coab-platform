@@ -29,8 +29,8 @@ export const updateProfileSchema = z
     telefono: z
       .string()
       .regex(
-        /^(\+?56)?[0-9]{8,9}$/,
-        'Teléfono inválido (ej: +56912345678 o 912345678)'
+        /^\+56[0-9]{9}$/,
+        'Teléfono inválido (debe ser +56 seguido de 9 dígitos)'
       )
       .optional()
       .or(z.literal('')),
