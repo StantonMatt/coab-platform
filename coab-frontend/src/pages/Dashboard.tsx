@@ -16,7 +16,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import apiClient from '@/lib/api';
 import PaymentModal from '@/components/PaymentModal';
-import { CreditCard, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { CreditCard, Clock, CheckCircle, XCircle, AlertCircle, Download, Loader2 } from 'lucide-react';
 
 // Types
 interface Notification {
@@ -210,6 +210,25 @@ export default function DashboardPage() {
   });
 
   const [selectedCardForAutopay, setSelectedCardForAutopay] = useState<string>('');
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
+
+  // Download PDF mutation
+  const handleDownloadPdf = async (boletaId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent navigation to boleta detail
+    setDownloadingPdfId(boletaId);
+    try {
+      const res = await apiClient.get(`/clientes/me/boletas/${boletaId}/pdf`);
+      if (res.data?.url) {
+        // Open the signed URL in a new tab
+        window.open(res.data.url, '_blank');
+      }
+    } catch (error) {
+      console.error('Error downloading PDF:', error);
+      // Could add toast notification here
+    } finally {
+      setDownloadingPdfId(null);
+    }
+  };
 
   const handleLogout = async () => {
     const refreshToken = localStorage.getItem('refresh_token');
@@ -608,21 +627,37 @@ export default function DashboardPage() {
                           )}
                         </p>
                       </div>
-                      <span
-                        className={`text-xs px-2 py-1 rounded ${
-                          boleta.parcialmentePagada
-                            ? 'bg-amber-100 text-amber-700'
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          onClick={(e) => handleDownloadPdf(boleta.id, e)}
+                          disabled={downloadingPdfId === boleta.id}
+                          title="Descargar PDF"
+                        >
+                          {downloadingPdfId === boleta.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <span
+                          className={`text-xs px-2 py-1 rounded ${
+                            boleta.parcialmentePagada
+                              ? 'bg-amber-100 text-amber-700'
+                              : boleta.estado === 'pendiente'
+                              ? 'bg-orange-100 text-orange-800'
+                              : 'bg-green-100 text-green-800'
+                          }`}
+                        >
+                          {boleta.parcialmentePagada
+                            ? 'Parcial'
                             : boleta.estado === 'pendiente'
-                            ? 'bg-orange-100 text-orange-800'
-                            : 'bg-green-100 text-green-800'
-                        }`}
-                      >
-                        {boleta.parcialmentePagada
-                          ? 'Parcial'
-                          : boleta.estado === 'pendiente'
-                          ? 'Pendiente'
-                          : 'Pagada'}
-                      </span>
+                            ? 'Pendiente'
+                            : 'Pagada'}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>

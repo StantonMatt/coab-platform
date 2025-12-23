@@ -3,7 +3,20 @@ import { ZodError } from 'zod';
 import * as adminService from '../services/admin.service.js';
 import * as twilioService from '../services/twilio.service.js';
 import * as autopagoService from '../services/autopago.service.js';
+import * as pdfService from '../services/pdf.service.js';
 import { requireAdmin } from '../middleware/auth.middleware.js';
+import { z } from 'zod';
+
+// Schema for batch PDF generation
+const batchPDFSchema = z.object({
+  periodo: z.string().regex(/^\d{4}-\d{2}$/, 'Periodo debe tener formato YYYY-MM'),
+  regenerar: z.boolean().optional().default(false),
+});
+
+// Schema for boleta ID param
+const boletaIdParamSchema = z.object({
+  id: z.string().regex(/^\d+$/, 'ID de boleta inválido'),
+});
 import { env } from '../config/env.js';
 import {
   searchSchema,
@@ -150,6 +163,146 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
           code: 'INTERNAL_ERROR',
           message: 'Error al obtener boletas',
         },
+      });
+    }
+  });
+
+  // =========================================================================
+  // PDF Generation Endpoints
+  // =========================================================================
+
+  /**
+   * GET /admin/boletas/:id/pdf
+   * Download a single boleta as PDF
+   */
+  fastify.get('/boletas/:id/pdf', async (request, reply) => {
+    try {
+      const params = boletaIdParamSchema.parse(request.params);
+      const boletaId = BigInt(params.id);
+
+      // Check if PDF exists in storage
+      const exists = await pdfService.pdfExists(boletaId);
+      if (!exists) {
+        // Generate and store the PDF
+        const result = await pdfService.generateAndStorePDF(boletaId);
+        if (!result.success) {
+          // Fallback: generate on-the-fly
+          const pdfBuffer = await pdfService.generateBoletaPDF(boletaId);
+          if (!pdfBuffer) {
+            return reply.code(500).send({
+              error: { code: 'PDF_GENERATION_FAILED', message: 'Error al generar PDF' },
+            });
+          }
+          return reply
+            .header('Content-Type', 'application/pdf')
+            .header('Content-Disposition', `attachment; filename="boleta-${params.id}.pdf"`)
+            .send(pdfBuffer);
+        }
+      }
+
+      // Get signed URL from storage
+      const urlResult = await pdfService.getStoredPDFUrl(boletaId);
+      if (urlResult.error || !urlResult.url) {
+        const pdfBuffer = await pdfService.generateBoletaPDF(boletaId);
+        if (!pdfBuffer) {
+          return reply.code(500).send({
+            error: { code: 'PDF_GENERATION_FAILED', message: 'Error al generar PDF' },
+          });
+        }
+        return reply
+          .header('Content-Type', 'application/pdf')
+          .header('Content-Disposition', `attachment; filename="boleta-${params.id}.pdf"`)
+          .send(pdfBuffer);
+      }
+
+      return { url: urlResult.url };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al descargar boleta PDF');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al descargar boleta' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/boletas/:id/regenerar-pdf
+   * Regenerate PDF for a specific boleta
+   */
+  fastify.post('/boletas/:id/regenerar-pdf', async (request, reply) => {
+    try {
+      const params = boletaIdParamSchema.parse(request.params);
+      const boletaId = BigInt(params.id);
+
+      const result = await pdfService.regeneratePDF(boletaId);
+
+      if (!result.success) {
+        return reply.code(500).send({
+          error: { code: 'PDF_GENERATION_FAILED', message: result.error },
+        });
+      }
+
+      fastify.log.info(
+        { boletaId: params.id, adminEmail: request.user!.email },
+        'PDF regenerado'
+      );
+
+      return { success: true, path: result.path, message: 'PDF regenerado correctamente' };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al regenerar PDF');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al regenerar PDF' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/boletas/generar-pdfs
+   * Batch generate PDFs for a specific period
+   */
+  fastify.post('/boletas/generar-pdfs', async (request, reply) => {
+    try {
+      const data = batchPDFSchema.parse(request.body);
+      const [yearStr, monthStr] = data.periodo.split('-');
+      const year = parseInt(yearStr, 10);
+      const month = parseInt(monthStr, 10);
+
+      fastify.log.info(
+        { periodo: data.periodo, regenerar: data.regenerar, adminEmail: request.user!.email },
+        'Iniciando generación masiva de PDFs'
+      );
+
+      const result = await pdfService.batchGeneratePDFs(year, month, data.regenerar);
+
+      fastify.log.info(
+        { ...result, periodo: data.periodo },
+        'Generación masiva de PDFs completada'
+      );
+
+      return {
+        success: true,
+        periodo: data.periodo,
+        ...result,
+        mensaje: `Generados: ${result.generated}/${result.total}, Fallidos: ${result.failed}`,
+      };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error en generación masiva de PDFs');
+      return reply.code(500).send({
+        error: { code: 'BATCH_GENERATION_FAILED', message: 'Error al generar PDFs' },
       });
     }
   });

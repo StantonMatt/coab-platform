@@ -9,6 +9,7 @@ import * as customerService from '../services/customer.service.js';
 import * as autopagoService from '../services/autopago.service.js';
 import * as authService from '../services/auth.service.js';
 import * as verificacionService from '../services/verificacion.service.js';
+import * as pdfService from '../services/pdf.service.js';
 import { requireCliente } from '../middleware/auth.middleware.js';
 
 // Schema for activar autopago
@@ -350,6 +351,81 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error, 'Error al obtener boleta');
         return reply.code(500).send({
           error: { code: 'INTERNAL_ERROR', message: 'Error al obtener boleta' },
+        });
+      }
+    });
+
+    /**
+     * GET /clientes/me/boletas/:id/pdf
+     * Download boleta as PDF
+     * Returns signed URL or streams PDF directly
+     */
+    protectedRoutes.get('/me/boletas/:id/pdf', async (request, reply) => {
+      try {
+        const params = boletaIdSchema.parse(request.params);
+        const clienteId = request.user!.userId as bigint;
+        const boletaId = BigInt(params.id);
+
+        // Verify the boleta belongs to this customer
+        const boleta = await customerService.getBoletaById(clienteId, boletaId);
+        if (!boleta) {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: 'Boleta no encontrada' },
+          });
+        }
+
+        // Check if PDF exists in storage, if not generate it
+        const exists = await pdfService.pdfExists(boletaId);
+        if (!exists) {
+          // Generate and store the PDF
+          const result = await pdfService.generateAndStorePDF(boletaId);
+          if (!result.success) {
+            // Fallback: generate on-the-fly without storing
+            const pdfBuffer = await pdfService.generateBoletaPDF(boletaId);
+            if (!pdfBuffer) {
+              return reply.code(500).send({
+                error: { code: 'PDF_GENERATION_FAILED', message: 'Error al generar PDF' },
+              });
+            }
+            return reply
+              .header('Content-Type', 'application/pdf')
+              .header('Content-Disposition', `attachment; filename="boleta-${params.id}.pdf"`)
+              .send(pdfBuffer);
+          }
+        }
+
+        // Get signed URL from storage
+        const urlResult = await pdfService.getStoredPDFUrl(boletaId);
+        if (urlResult.error || !urlResult.url) {
+          // Fallback: generate on-the-fly
+          const pdfBuffer = await pdfService.generateBoletaPDF(boletaId);
+          if (!pdfBuffer) {
+            return reply.code(500).send({
+              error: { code: 'PDF_GENERATION_FAILED', message: 'Error al generar PDF' },
+            });
+          }
+          return reply
+            .header('Content-Type', 'application/pdf')
+            .header('Content-Disposition', `attachment; filename="boleta-${params.id}.pdf"`)
+            .send(pdfBuffer);
+        }
+
+        // Return signed URL for client-side download
+        return { url: urlResult.url };
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Boleta no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al descargar boleta PDF');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al descargar boleta' },
         });
       }
     });

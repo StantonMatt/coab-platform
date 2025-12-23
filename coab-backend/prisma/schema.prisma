@@ -105,6 +105,8 @@ model boletas {
   costo_tratamiento                Decimal?                   @db.Decimal(10, 2)
   costo_alcantarillado_tratamiento Decimal?                   @db.Decimal(10, 2)
   costo_cargo_fijo                 Decimal?                   @db.Decimal(10, 2)
+  pdf_path                         String?                    // Supabase storage path
+  pdf_generado_en                  DateTime?                  @db.Timestamptz(6)
   cliente                          clientes?                  @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   repactacion                      repactaciones?             @relation(fields: [repactacion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   cortes_servicio                  cortes_servicio[]

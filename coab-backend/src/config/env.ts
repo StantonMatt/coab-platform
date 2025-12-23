@@ -50,6 +50,10 @@ const envSchema = z.object({
 
   // Frontend URL (for setup links)
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
+
+  // Supabase Storage (for PDF storage)
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SERVICE_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

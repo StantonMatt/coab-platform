@@ -16,6 +16,7 @@ import AdminLoginPage from './pages/admin/Login';
 import AdminDashboardPage from './pages/admin/Dashboard';
 import AdminCustomersPage from './pages/admin/Customers';
 import AdminCustomerProfilePage from './pages/admin/CustomerProfile';
+import AdminBatchPDFPage from './pages/admin/BatchPDF';
 import './index.css';
 
 // Initialize Mercado Pago SDK (public key will be fetched from backend)
@@ -57,6 +58,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
           <Route path="/admin/clientes" element={<AdminCustomersPage />} />
           <Route path="/admin/clientes/:id" element={<AdminCustomerProfilePage />} />
+          <Route path="/admin/boletas/generar" element={<AdminBatchPDFPage />} />
           <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
         </Routes>
         <Toaster />

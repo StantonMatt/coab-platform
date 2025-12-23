@@ -21,6 +21,9 @@ import {
   Calendar,
   AlertTriangle,
   Send,
+  Download,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import PaymentModal from '@/components/admin/PaymentModal';
 
@@ -82,6 +85,47 @@ export default function CustomerProfilePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
+  const [regeneratingPdfId, setRegeneratingPdfId] = useState<string | null>(null);
+
+  // Download PDF function
+  const handleDownloadPdf = async (boletaId: string) => {
+    setDownloadingPdfId(boletaId);
+    try {
+      const res = await adminApiClient.get(`/admin/boletas/${boletaId}/pdf`);
+      if (res.data?.url) {
+        window.open(res.data.url, '_blank');
+      }
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'Error al descargar PDF',
+      });
+    } finally {
+      setDownloadingPdfId(null);
+    }
+  };
+
+  // Regenerate PDF function
+  const handleRegeneratePdf = async (boletaId: string) => {
+    setRegeneratingPdfId(boletaId);
+    try {
+      await adminApiClient.post(`/admin/boletas/${boletaId}/regenerar-pdf`);
+      toast({
+        title: 'PDF regenerado',
+        description: 'El PDF ha sido regenerado correctamente',
+      });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'Error al regenerar PDF',
+      });
+    } finally {
+      setRegeneratingPdfId(null);
+    }
+  };
 
   // Check admin auth
   useEffect(() => {
@@ -483,6 +527,9 @@ export default function CustomerProfilePage() {
                         <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
                           Estado
                         </th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
+                          PDF
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -534,6 +581,38 @@ export default function CustomerProfilePage() {
                                 ? 'Pendiente'
                                 : 'Pagada'}
                             </span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => handleDownloadPdf(boleta.id)}
+                                disabled={downloadingPdfId === boleta.id}
+                                title="Descargar PDF"
+                              >
+                                {downloadingPdfId === boleta.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Download className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => handleRegeneratePdf(boleta.id)}
+                                disabled={regeneratingPdfId === boleta.id}
+                                title="Regenerar PDF"
+                              >
+                                {regeneratingPdfId === boleta.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
