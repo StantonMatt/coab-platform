@@ -137,10 +137,6 @@ export default function BatchPDFPage() {
     onSuccess: (data) => {
       setCurrentJobId(data.jobId);
       setIsPolling(true);
-      toast({
-        title: 'Trabajo iniciado',
-        description: 'La generación de PDFs ha comenzado',
-      });
     },
     onError: (error: any) => {
       toast({
@@ -191,7 +187,7 @@ export default function BatchPDFPage() {
     }
   }, [currentJobId, toast]);
 
-  // Start new job
+  // Reset to start new job
   const handleStartNew = () => {
     setCurrentJobId(null);
     setIsPolling(false);
@@ -201,6 +197,8 @@ export default function BatchPDFPage() {
   const isComplete = jobStatus?.estado === 'completado';
   const hasError = jobStatus?.estado === 'error';
   const isCancelled = jobStatus?.estado === 'cancelado';
+  const hasJob = !!currentJobId;
+  const jobFinished = isComplete || hasError || isCancelled;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -229,56 +227,63 @@ export default function BatchPDFPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        {/* Generation Form */}
-        {!currentJobId && (
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Configuración
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Month Selection */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">
-                  Período
+        {/* Configuration Card - Always visible */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Configuración
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Month Selection */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">
+                Período
+              </label>
+              <Select 
+                value={selectedMonth} 
+                onValueChange={setSelectedMonth}
+                disabled={hasJob && !jobFinished}
+              >
+                <SelectTrigger className="w-full max-w-xs">
+                  <SelectValue placeholder="Seleccionar mes" />
+                </SelectTrigger>
+                <SelectContent>
+                  {monthOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Regenerate Toggle */}
+            <div className="flex items-center gap-3">
+              <Switch
+                id="regenerate"
+                checked={regenerate}
+                onCheckedChange={setRegenerate}
+                disabled={hasJob && !jobFinished}
+              />
+              <div>
+                <label
+                  htmlFor="regenerate"
+                  className={`text-sm font-medium cursor-pointer ${
+                    hasJob && !jobFinished ? 'text-slate-400' : 'text-slate-700'
+                  }`}
+                >
+                  Regenerar existentes
                 </label>
-                <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                  <SelectTrigger className="w-full max-w-xs">
-                    <SelectValue placeholder="Seleccionar mes" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {monthOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <p className="text-xs text-slate-500">
+                  Sobrescribe PDFs que ya existen
+                </p>
               </div>
+            </div>
 
-              {/* Regenerate Toggle */}
-              <div className="flex items-center gap-3">
-                <Switch
-                  id="regenerate"
-                  checked={regenerate}
-                  onCheckedChange={setRegenerate}
-                />
-                <div>
-                  <label
-                    htmlFor="regenerate"
-                    className="text-sm font-medium text-slate-700 cursor-pointer"
-                  >
-                    Regenerar existentes
-                  </label>
-                  <p className="text-xs text-slate-500">
-                    Sobrescribe PDFs que ya existen
-                  </p>
-                </div>
-              </div>
-
-              {/* Generate Button */}
+            {/* Generate Button */}
+            {!hasJob && (
               <Button
                 onClick={() => startMutation.mutate()}
                 disabled={startMutation.isPending}
@@ -296,178 +301,184 @@ export default function BatchPDFPage() {
                   </>
                 )}
               </Button>
-            </CardContent>
-          </Card>
-        )}
+            )}
 
-        {/* Progress Section */}
-        {currentJobId && jobStatus && (
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base font-semibold text-slate-900 flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  {isActive && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
-                  {isComplete && <CheckCircle className="h-5 w-5 text-emerald-600" />}
-                  {hasError && <XCircle className="h-5 w-5 text-red-600" />}
-                  {isCancelled && <StopCircle className="h-5 w-5 text-amber-600" />}
-                  {isActive ? 'Procesando...' : 
-                   isComplete ? 'Completado' : 
-                   hasError ? 'Error' : 
-                   isCancelled ? 'Cancelado' : 'Estado'}
-                </span>
-                <span className="text-sm font-normal text-slate-500">
-                  {format(new Date(jobStatus.periodo + '-01'), 'MMMM yyyy', { locale: es })}
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Progress Bar */}
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-600">
-                    Procesando {jobStatus.procesados} de {jobStatus.total} boletas
-                  </span>
-                  <span className="font-medium text-slate-900">{jobStatus.porcentaje}%</span>
-                </div>
-                <Progress 
-                  value={jobStatus.porcentaje} 
-                  className="h-3"
-                  indicatorClassName={
-                    hasError ? 'bg-red-500' : 
-                    isCancelled ? 'bg-amber-500' : 
-                    isComplete ? 'bg-emerald-500' : 'bg-blue-600'
-                  }
-                />
-                {isActive && jobStatus.tiempoEstimado && (
-                  <div className="flex items-center gap-1 text-sm text-slate-500">
-                    <Clock className="h-4 w-4" />
-                    {formatTimeRemaining(jobStatus.tiempoEstimado)}
+            {/* Inline Progress Section */}
+            {hasJob && (
+              <div className="pt-4 border-t border-slate-200 space-y-4">
+                {/* Loading state */}
+                {isLoadingJob && !jobStatus && (
+                  <div className="flex items-center gap-3 text-slate-600">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span>Iniciando trabajo...</span>
                   </div>
                 )}
-              </div>
 
-              {/* Stats Grid */}
-              <div className="grid grid-cols-4 gap-3 text-center">
-                <div className="p-3 bg-slate-50 rounded-lg">
-                  <p className="text-xl font-bold text-slate-900">
-                    {jobStatus.total}
-                  </p>
-                  <p className="text-xs text-slate-500">Total</p>
-                </div>
-                <div className="p-3 bg-emerald-50 rounded-lg">
-                  <p className="text-xl font-bold text-emerald-600">
-                    {jobStatus.exitosos}
-                  </p>
-                  <p className="text-xs text-emerald-600">Generados</p>
-                </div>
-                <div className="p-3 bg-amber-50 rounded-lg">
-                  <p className="text-xl font-bold text-amber-600">
-                    {jobStatus.omitidos}
-                  </p>
-                  <p className="text-xs text-amber-600">Existentes</p>
-                </div>
-                <div className="p-3 bg-red-50 rounded-lg">
-                  <p className="text-xl font-bold text-red-600">
-                    {jobStatus.fallidos}
-                  </p>
-                  <p className="text-xs text-red-600">Fallidos</p>
-                </div>
-              </div>
-
-              {/* Status Message */}
-              {isComplete && (
-                <div className="flex items-center gap-3 p-4 rounded-lg bg-emerald-50 text-emerald-800">
-                  <CheckCircle className="h-5 w-5 flex-shrink-0" />
-                  <span className="font-medium">
-                    Generación completada exitosamente
-                  </span>
-                </div>
-              )}
-
-              {hasError && (
-                <div className="flex items-center gap-3 p-4 rounded-lg bg-red-50 text-red-800">
-                  <AlertCircle className="h-5 w-5 flex-shrink-0" />
-                  <span className="font-medium">
-                    El trabajo terminó con errores
-                  </span>
-                </div>
-              )}
-
-              {isCancelled && (
-                <div className="flex items-center gap-3 p-4 rounded-lg bg-amber-50 text-amber-800">
-                  <StopCircle className="h-5 w-5 flex-shrink-0" />
-                  <span className="font-medium">
-                    La generación fue cancelada
-                  </span>
-                </div>
-              )}
-
-              {/* Error Details */}
-              {jobStatus.errores && jobStatus.errores.length > 0 && (
-                <div className="border border-red-200 rounded-lg overflow-hidden">
-                  <div className="bg-red-50 px-4 py-2 text-sm font-medium text-red-800">
-                    Errores ({jobStatus.errores.length})
-                  </div>
-                  <div className="max-h-48 overflow-y-auto">
-                    {jobStatus.errores.map((error, i) => (
-                      <div
-                        key={i}
-                        className="px-4 py-2 text-sm text-red-700 border-t border-red-100"
-                      >
-                        {error}
+                {/* Progress Display */}
+                {jobStatus && (
+                  <>
+                    {/* Status Header */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {isActive && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
+                        {isComplete && <CheckCircle className="h-5 w-5 text-emerald-600" />}
+                        {hasError && <XCircle className="h-5 w-5 text-red-600" />}
+                        {isCancelled && <StopCircle className="h-5 w-5 text-amber-600" />}
+                        <span className={`font-medium ${
+                          isActive ? 'text-blue-700' :
+                          isComplete ? 'text-emerald-700' :
+                          hasError ? 'text-red-700' :
+                          'text-amber-700'
+                        }`}>
+                          {isActive ? 'Procesando...' : 
+                           isComplete ? 'Completado' : 
+                           hasError ? 'Error' : 
+                           'Cancelado'}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                      {isActive && jobStatus.tiempoEstimado && (
+                        <div className="flex items-center gap-1 text-sm text-slate-500">
+                          <Clock className="h-4 w-4" />
+                          {formatTimeRemaining(jobStatus.tiempoEstimado)}
+                        </div>
+                      )}
+                    </div>
 
-              {/* Action Buttons */}
-              <div className="flex gap-3">
-                {isActive && (
-                  <Button
-                    variant="destructive"
-                    onClick={() => cancelMutation.mutate()}
-                    disabled={cancelMutation.isPending}
-                  >
-                    {cancelMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <StopCircle className="h-4 w-4 mr-2" />
+                    {/* Progress Bar */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-600">
+                          {jobStatus.procesados} de {jobStatus.total} boletas
+                        </span>
+                        <span className="font-medium text-slate-900">{jobStatus.porcentaje}%</span>
+                      </div>
+                      <Progress 
+                        value={jobStatus.porcentaje} 
+                        className="h-2"
+                        indicatorClassName={
+                          hasError ? 'bg-red-500' : 
+                          isCancelled ? 'bg-amber-500' : 
+                          isComplete ? 'bg-emerald-500' : 'bg-blue-600'
+                        }
+                      />
+                    </div>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-4 gap-2 text-center">
+                      <div className="p-2 bg-slate-50 rounded-lg">
+                        <p className="text-lg font-bold text-slate-900">
+                          {jobStatus.total}
+                        </p>
+                        <p className="text-xs text-slate-500">Total</p>
+                      </div>
+                      <div className="p-2 bg-emerald-50 rounded-lg">
+                        <p className="text-lg font-bold text-emerald-600">
+                          {jobStatus.exitosos}
+                        </p>
+                        <p className="text-xs text-emerald-600">Generados</p>
+                      </div>
+                      <div className="p-2 bg-amber-50 rounded-lg">
+                        <p className="text-lg font-bold text-amber-600">
+                          {jobStatus.omitidos}
+                        </p>
+                        <p className="text-xs text-amber-600">Existentes</p>
+                      </div>
+                      <div className="p-2 bg-red-50 rounded-lg">
+                        <p className="text-lg font-bold text-red-600">
+                          {jobStatus.fallidos}
+                        </p>
+                        <p className="text-xs text-red-600">Fallidos</p>
+                      </div>
+                    </div>
+
+                    {/* Status Messages */}
+                    {isComplete && (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-50 text-emerald-800 text-sm">
+                        <CheckCircle className="h-4 w-4 flex-shrink-0" />
+                        <span>Generación completada exitosamente</span>
+                      </div>
                     )}
-                    Cancelar
-                  </Button>
-                )}
 
-                {isComplete && jobStatus.zipPath && (
-                  <Button
-                    onClick={handleDownload}
-                    className="bg-emerald-600 hover:bg-emerald-700"
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    Descargar ZIP
-                  </Button>
-                )}
+                    {hasError && (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 text-red-800 text-sm">
+                        <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                        <span>El trabajo terminó con errores</span>
+                      </div>
+                    )}
 
-                {(isComplete || hasError || isCancelled) && (
-                  <Button variant="outline" onClick={handleStartNew}>
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Nuevo Trabajo
-                  </Button>
+                    {isCancelled && (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 text-amber-800 text-sm">
+                        <StopCircle className="h-4 w-4 flex-shrink-0" />
+                        <span>La generación fue cancelada</span>
+                      </div>
+                    )}
+
+                    {/* Error Details */}
+                    {jobStatus.errores && jobStatus.errores.length > 0 && (
+                      <div className="border border-red-200 rounded-lg overflow-hidden">
+                        <div className="bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+                          Errores ({jobStatus.errores.length})
+                        </div>
+                        <div className="max-h-32 overflow-y-auto">
+                          {jobStatus.errores.slice(0, 10).map((error, i) => (
+                            <div
+                              key={i}
+                              className="px-3 py-1.5 text-sm text-red-700 border-t border-red-100"
+                            >
+                              {error}
+                            </div>
+                          ))}
+                          {jobStatus.errores.length > 10 && (
+                            <div className="px-3 py-1.5 text-sm text-red-500 border-t border-red-100 italic">
+                              ...y {jobStatus.errores.length - 10} más
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-3 pt-2">
+                      {isActive && (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => cancelMutation.mutate()}
+                          disabled={cancelMutation.isPending}
+                        >
+                          {cancelMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <StopCircle className="h-4 w-4 mr-2" />
+                          )}
+                          Cancelar
+                        </Button>
+                      )}
+
+                      {isComplete && jobStatus.zipPath && (
+                        <Button
+                          size="sm"
+                          onClick={handleDownload}
+                          className="bg-emerald-600 hover:bg-emerald-700"
+                        >
+                          <Download className="h-4 w-4 mr-2" />
+                          Descargar ZIP
+                        </Button>
+                      )}
+
+                      {jobFinished && (
+                        <Button variant="outline" size="sm" onClick={handleStartNew}>
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          Nuevo Trabajo
+                        </Button>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Loading state when job ID is set but status not yet loaded */}
-        {currentJobId && !jobStatus && isLoadingJob && (
-          <Card className="border-slate-200 shadow-sm">
-            <CardContent className="py-12 text-center">
-              <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
-              <p className="text-slate-600">Cargando estado del trabajo...</p>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
 
         {/* Help Text */}
         <Card className="border-slate-200 shadow-sm bg-blue-50">
@@ -477,11 +488,8 @@ export default function BatchPDFPage() {
               <li>• Los PDFs se generan en paralelo para mayor velocidad</li>
               <li>• El archivo ZIP estará disponible al finalizar</li>
               <li>• Puede cancelar el trabajo en cualquier momento</li>
-              <li>• Los clientes pueden descargar sus boletas desde el portal</li>
-              <li>
-                • Para generar PDFs individuales, use el botón en el perfil del
-                cliente
-              </li>
+              <li>• "Existentes" son boletas que ya tienen PDF generado</li>
+              <li>• Active "Regenerar existentes" para sobrescribir todos los PDFs</li>
             </ul>
           </CardContent>
         </Card>
@@ -489,4 +497,3 @@ export default function BatchPDFPage() {
     </div>
   );
 }
-
