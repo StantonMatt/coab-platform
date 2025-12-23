@@ -69,6 +69,67 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * GET /admin/lecturas/periodos-disponibles
+   * Get list of periods (year-month) that have lecturas, with boleta PDF status
+   */
+  fastify.get('/lecturas/periodos-disponibles', async (request, reply) => {
+    try {
+      const periodos = await pdfService.getAvailablePeriods();
+      return { periodos };
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener períodos disponibles');
+      return reply.code(500).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Error al obtener períodos disponibles',
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/clientes/buscar-boleta?q=...&periodo=YYYY-MM
+   * Search for a client's boleta by RUT or numero_cliente for a specific period
+   */
+  fastify.get('/clientes/buscar-boleta', async (request, reply) => {
+    try {
+      const query = z.object({
+        q: z.string().min(1, 'Debe ingresar un término de búsqueda'),
+        periodo: z.string().regex(/^\d{4}-\d{2}$/, 'Periodo debe tener formato YYYY-MM'),
+      }).parse(request.query);
+
+      const result = await pdfService.searchClientBoleta(query.q, query.periodo);
+      
+      if (!result) {
+        return reply.code(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: 'No se encontró cliente o boleta para este período',
+          },
+        });
+      }
+
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: error.errors[0].message,
+          },
+        });
+      }
+      fastify.log.error(error, 'Error al buscar boleta de cliente');
+      return reply.code(500).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Error al buscar boleta',
+        },
+      });
+    }
+  });
+
+  /**
    * GET /admin/clientes/:id
    * Get customer profile for admin view
    */

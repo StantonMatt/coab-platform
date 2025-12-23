@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
-import { format, subMonths } from 'date-fns';
-import { es } from 'date-fns/locale';
+import MonthYearPicker from '@/components/MonthYearPicker';
 import {
   ArrowLeft,
   FileText,
@@ -20,15 +20,11 @@ import {
   AlertCircle,
   StopCircle,
   Archive,
+  Search,
+  User,
 } from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { formatearRUT } from '@coab/utils';
 
 interface JobStatus {
   id: string;
@@ -48,12 +44,36 @@ interface JobStatus {
   tiempoEstimado: number | null;
 }
 
+interface PeriodData {
+  año: number;
+  mes: number;
+  totalBoletas: number;
+  boletasConPdf: number;
+  tieneBoletasPdf: boolean;
+}
+
 interface PeriodStats {
   total: number;
   conPdf: number;
   sinPdf: number;
   periodo: string;
   periodoLabel: string;
+}
+
+interface ClientBoletaResult {
+  cliente: {
+    id: string;
+    nombre: string;
+    rut: string;
+    numeroCliente: string;
+  };
+  boleta: {
+    id: string;
+    periodo: string;
+    montoTotal: number;
+    tienePdf: boolean;
+  };
+  pdfUrl?: string;
 }
 
 interface StartJobResponse {
@@ -70,25 +90,28 @@ function formatTimeRemaining(seconds: number | null): string {
   return `~${minutes}m ${secs}s restantes`;
 }
 
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat('es-CL', {
+    style: 'currency',
+    currency: 'CLP',
+    minimumFractionDigits: 0,
+  }).format(amount);
+}
+
 export default function BatchPDFPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
-  // Generate last 12 months as options (excluding current month if it's early in the month)
-  const monthOptions = Array.from({ length: 12 }, (_, i) => {
-    const date = subMonths(new Date(), i);
-    return {
-      value: format(date, 'yyyy-MM'),
-      label: format(date, 'MMMM yyyy', { locale: es }),
-    };
-  });
-  
-  const [selectedMonth, setSelectedMonth] = useState(monthOptions[1].value); // Default to last month
+  const [selectedMonth, setSelectedMonth] = useState('');
   const [regenerate, setRegenerate] = useState(false);
   const [generateZip, setGenerateZip] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
+  
+  // Client search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
 
   // Check admin auth
   useEffect(() => {
@@ -98,14 +121,56 @@ export default function BatchPDFPage() {
     }
   }, [navigate]);
 
+  // Debounce search query
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Fetch available periods
+  const { data: availablePeriodsData, isLoading: isLoadingPeriods } = useQuery({
+    queryKey: ['available-periods'],
+    queryFn: async () => {
+      const res = await adminApiClient.get('/admin/lecturas/periodos-disponibles');
+      return res.data as { periodos: PeriodData[] };
+    },
+  });
+
+  const availablePeriods = availablePeriodsData?.periodos || [];
+
+  // Set initial selected month when periods load
+  useEffect(() => {
+    if (availablePeriods.length > 0 && !selectedMonth) {
+      const firstPeriod = availablePeriods[0];
+      setSelectedMonth(`${firstPeriod.año}-${String(firstPeriod.mes).padStart(2, '0')}`);
+    }
+  }, [availablePeriods, selectedMonth]);
+
   // Fetch period stats when month changes
   const { data: periodStats, isLoading: isLoadingStats } = useQuery({
     queryKey: ['period-stats', selectedMonth],
     queryFn: async () => {
+      if (!selectedMonth) return null;
       const res = await adminApiClient.get(`/admin/boletas/periodo-stats?periodo=${selectedMonth}`);
       return res.data as PeriodStats;
     },
-    enabled: !currentJobId, // Don't fetch while job is running
+    enabled: !!selectedMonth && !currentJobId,
+  });
+
+  // Search client boleta
+  const { data: searchResult, isLoading: isSearching } = useQuery({
+    queryKey: ['client-boleta-search', debouncedQuery, selectedMonth],
+    queryFn: async () => {
+      if (!debouncedQuery || !selectedMonth) return null;
+      const res = await adminApiClient.get(
+        `/admin/clientes/buscar-boleta?q=${encodeURIComponent(debouncedQuery)}&periodo=${selectedMonth}`
+      );
+      return res.data as ClientBoletaResult;
+    },
+    enabled: debouncedQuery.length >= 3 && !!selectedMonth,
+    retry: false,
   });
 
   // Poll for job status
@@ -117,7 +182,7 @@ export default function BatchPDFPage() {
       return res.data as JobStatus;
     },
     enabled: !!currentJobId && isPolling,
-    refetchInterval: isPolling ? 2000 : false, // Poll every 2 seconds
+    refetchInterval: isPolling ? 2000 : false,
   });
 
   // Stop polling when job completes
@@ -130,8 +195,8 @@ export default function BatchPDFPage() {
           title: 'Generación completada',
           description: `Se generaron ${jobStatus.exitosos} PDFs exitosamente`,
         });
-        // Refresh stats
         queryClient.invalidateQueries({ queryKey: ['period-stats'] });
+        queryClient.invalidateQueries({ queryKey: ['available-periods'] });
       } else if (jobStatus.estado === 'error') {
         toast({
           variant: 'destructive',
@@ -191,6 +256,37 @@ export default function BatchPDFPage() {
     },
   });
 
+  // Generate single PDF mutation
+  const generateSingleMutation = useMutation({
+    mutationFn: async (boletaId: string) => {
+      await adminApiClient.post(`/admin/boletas/${boletaId}/regenerar-pdf`);
+      // Fetch updated boleta info
+      const res = await adminApiClient.get(
+        `/admin/clientes/buscar-boleta?q=${encodeURIComponent(debouncedQuery)}&periodo=${selectedMonth}`
+      );
+      return res.data as ClientBoletaResult;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: 'PDF generado',
+        description: 'El PDF se generó exitosamente',
+      });
+      queryClient.invalidateQueries({ queryKey: ['client-boleta-search'] });
+      // Open the PDF
+      if (data.pdfUrl) {
+        window.open(data.pdfUrl, '_blank');
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description:
+          error.response?.data?.error?.message || 'Error al generar PDF',
+      });
+    },
+  });
+
   // Download ZIP
   const handleDownload = useCallback(async () => {
     if (!currentJobId) return;
@@ -210,11 +306,36 @@ export default function BatchPDFPage() {
     }
   }, [currentJobId, toast]);
 
+  // Download existing PDFs as ZIP (trigger generation with ZIP only)
+  const handleDownloadExisting = async () => {
+    try {
+      const res = await adminApiClient.post('/admin/boletas/generar-pdfs', {
+        periodo: selectedMonth,
+        regenerar: false,
+        generarZip: true,
+      });
+      setCurrentJobId(res.data.jobId);
+      setIsPolling(true);
+      toast({
+        title: 'Generando ZIP',
+        description: 'Preparando archivo para descargar...',
+      });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description:
+          error.response?.data?.error?.message || 'Error al generar ZIP',
+      });
+    }
+  };
+
   // Reset to start new job
   const handleStartNew = () => {
     setCurrentJobId(null);
     setIsPolling(false);
     queryClient.invalidateQueries({ queryKey: ['period-stats'] });
+    queryClient.invalidateQueries({ queryKey: ['available-periods'] });
   };
 
   const isActive = startMutation.isPending || (jobStatus?.estado === 'pendiente') || (jobStatus?.estado === 'procesando');
@@ -245,10 +366,10 @@ export default function BatchPDFPage() {
             </Button>
             <div>
               <h1 className="text-lg font-semibold text-slate-900">
-                Generación Masiva de PDFs
+                Generación de Boletas PDF
               </h1>
               <p className="text-sm text-slate-500">
-                Genera todas las boletas de un período
+                Genera y descarga boletas en formato PDF
               </p>
             </div>
           </div>
@@ -256,45 +377,37 @@ export default function BatchPDFPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        {/* Configuration Card - Always visible */}
+        {/* Period Selection Card */}
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
             <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <FileText className="h-5 w-5" />
-              Configuración
+              Seleccionar Período
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Month Selection */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">
-                Período
-              </label>
-              <Select 
-                value={selectedMonth} 
-                onValueChange={setSelectedMonth}
-                disabled={hasJob && !jobFinished}
-              >
-                <SelectTrigger className="w-full max-w-xs">
-                  <SelectValue placeholder="Seleccionar mes" />
-                </SelectTrigger>
-                <SelectContent>
-                  {monthOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Month Year Picker */}
+            {isLoadingPeriods ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                <span className="ml-2 text-slate-600">Cargando períodos...</span>
+              </div>
+            ) : (
+              <MonthYearPicker
+                selectedPeriodo={selectedMonth}
+                onSelect={setSelectedMonth}
+                availablePeriods={availablePeriods}
+                isLoading={hasJob && !jobFinished}
+              />
+            )}
 
             {/* Period Stats */}
-            {!hasJob && (
-              <div className="p-4 bg-slate-50 rounded-lg space-y-2">
+            {!hasJob && selectedMonth && (
+              <div className="p-4 bg-slate-50 rounded-lg space-y-3">
                 {isLoadingStats ? (
                   <div className="flex items-center gap-2 text-slate-500">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Cargando información del período...</span>
+                    <span>Cargando información...</span>
                   </div>
                 ) : noBoletas ? (
                   <div className="flex items-center gap-2 text-amber-700">
@@ -319,8 +432,22 @@ export default function BatchPDFPage() {
                         <p className="text-xs text-blue-600">Sin PDF</p>
                       </div>
                     </div>
+                    
+                    {/* Download Existing Button */}
+                    {periodStats.conPdf > 0 && (
+                      <Button
+                        variant="outline"
+                        onClick={handleDownloadExisting}
+                        disabled={startMutation.isPending}
+                        className="w-full"
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        Descargar {periodStats.conPdf} PDFs existentes (ZIP)
+                      </Button>
+                    )}
+
                     {allGenerated && (
-                      <div className="flex items-center gap-2 text-emerald-700 mt-2">
+                      <div className="flex items-center gap-2 text-emerald-700">
                         <CheckCircle className="h-4 w-4" />
                         <span className="text-sm">
                           Todos los PDFs ya están generados
@@ -331,7 +458,102 @@ export default function BatchPDFPage() {
                 ) : null}
               </div>
             )}
+          </CardContent>
+        </Card>
 
+        {/* Client Search Card */}
+        {selectedMonth && !hasJob && (
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                <Search className="h-5 w-5" />
+                Buscar Boleta Individual
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  placeholder="Buscar por RUT o N° Cliente..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+
+              {/* Search Results */}
+              {isSearching && (
+                <div className="flex items-center gap-2 text-slate-500 py-4">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Buscando...</span>
+                </div>
+              )}
+
+              {searchResult && !isSearching && (
+                <div className="p-4 bg-slate-50 rounded-lg space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-blue-100 rounded-full">
+                      <User className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-medium text-slate-900">
+                        {searchResult.cliente.nombre}
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        RUT: {formatearRUT(searchResult.cliente.rut)} • N° {searchResult.cliente.numeroCliente}
+                      </p>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Monto: {formatCurrency(searchResult.boleta.montoTotal)}
+                      </p>
+                    </div>
+                    <div>
+                      {searchResult.boleta.tienePdf ? (
+                        <Button
+                          size="sm"
+                          onClick={() => window.open(searchResult.pdfUrl, '_blank')}
+                          className="bg-emerald-600 hover:bg-emerald-700"
+                        >
+                          <Download className="h-4 w-4 mr-1" />
+                          Descargar
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={() => generateSingleMutation.mutate(searchResult.boleta.id)}
+                          disabled={generateSingleMutation.isPending}
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          {generateSingleMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                          ) : (
+                            <FileText className="h-4 w-4 mr-1" />
+                          )}
+                          Generar PDF
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {debouncedQuery.length >= 3 && !searchResult && !isSearching && (
+                <div className="text-center py-4 text-slate-500">
+                  No se encontró cliente o boleta para este período
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Batch Generation Card */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
+              <RefreshCw className="h-5 w-5" />
+              Generación Masiva
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
             {/* Options */}
             <div className="space-y-4">
               {/* Regenerate Toggle */}
@@ -589,11 +811,10 @@ export default function BatchPDFPage() {
           <CardContent className="pt-6">
             <h3 className="font-medium text-blue-900 mb-2">Información</h3>
             <ul className="text-sm text-blue-800 space-y-1">
-              <li>• Los PDFs se generan en paralelo para mayor velocidad</li>
+              <li>• Solo se muestran meses que tienen lecturas registradas</li>
+              <li>• Los meses con ✓ tienen todos los PDFs generados</li>
+              <li>• Use la búsqueda para descargar o generar una boleta individual</li>
               <li>• Los clientes pueden descargar sus boletas desde el portal</li>
-              <li>• Para generar PDFs individuales, use el perfil del cliente</li>
-              <li>• Active "Generar archivo ZIP" si necesita descargar todos los PDFs</li>
-              <li>• La generación de ZIP toma más tiempo (descarga cada archivo)</li>
             </ul>
           </CardContent>
         </Card>

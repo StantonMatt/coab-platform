@@ -739,3 +739,188 @@ export async function getPeriodStats(periodo: string): Promise<{
   };
 }
 
+/**
+ * Get all available periods (year-month combinations) that have lecturas
+ * Returns with boleta and PDF status for each period
+ * Uses sequential processing to avoid overwhelming the database connection pool
+ */
+export async function getAvailablePeriods(): Promise<{
+  año: number;
+  mes: number;
+  totalBoletas: number;
+  boletasConPdf: number;
+  tieneBoletasPdf: boolean;
+}[]> {
+  // Get distinct periods from lecturas table
+  const lecturaPeriods = await prisma.lecturas.findMany({
+    select: {
+      periodo_ano: true,
+      periodo_mes: true,
+    },
+    distinct: ['periodo_ano', 'periodo_mes'],
+    orderBy: [
+      { periodo_ano: 'desc' },
+      { periodo_mes: 'desc' },
+    ],
+  });
+
+  // Process periods sequentially to avoid overwhelming the connection pool
+  const periodsWithStats: {
+    año: number;
+    mes: number;
+    totalBoletas: number;
+    boletasConPdf: number;
+    tieneBoletasPdf: boolean;
+  }[] = [];
+
+  for (const p of lecturaPeriods) {
+    const startDate = new Date(Date.UTC(p.periodo_ano, p.periodo_mes - 1, 1));
+    const endDate = new Date(Date.UTC(p.periodo_ano, p.periodo_mes, 0));
+
+    const [totalBoletas, boletasConPdf] = await Promise.all([
+      prisma.boletas.count({
+        where: {
+          periodo_desde: {
+            gte: startDate,
+            lte: endDate,
+          },
+          cliente_id: { not: null },
+        },
+      }),
+      prisma.boletas.count({
+        where: {
+          periodo_desde: {
+            gte: startDate,
+            lte: endDate,
+          },
+          cliente_id: { not: null },
+          pdf_path: { not: null },
+        },
+      }),
+    ]);
+
+    periodsWithStats.push({
+      año: p.periodo_ano,
+      mes: p.periodo_mes,
+      totalBoletas,
+      boletasConPdf,
+      tieneBoletasPdf: boletasConPdf > 0,
+    });
+  }
+
+  return periodsWithStats;
+}
+
+/**
+ * Search for a client's boleta by RUT or numero_cliente for a specific period
+ */
+export async function searchClientBoleta(
+  query: string,
+  periodo: string
+): Promise<{
+  cliente: {
+    id: string;
+    nombre: string;
+    rut: string;
+    numeroCliente: string;
+  };
+  boleta: {
+    id: string;
+    periodo: string;
+    montoTotal: number;
+    tienePdf: boolean;
+  };
+  pdfUrl?: string;
+} | null> {
+  const [yearStr, monthStr] = periodo.split('-');
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const startDate = new Date(Date.UTC(year, month - 1, 1));
+  const endDate = new Date(Date.UTC(year, month, 0));
+
+  // Clean query - remove dots and dashes for RUT search
+  const cleanQuery = query.replace(/[.\-]/g, '').toUpperCase();
+
+  // Search for client
+  const cliente = await prisma.clientes.findFirst({
+    where: {
+      OR: [
+        { rut: { contains: cleanQuery, mode: 'insensitive' } },
+        { numero_cliente: { equals: query } },
+      ],
+    },
+    select: {
+      id: true,
+      primer_nombre: true,
+      segundo_nombre: true,
+      apellido_paterno: true,
+      apellido_materno: true,
+      rut: true,
+      numero_cliente: true,
+    },
+  });
+
+  if (!cliente) {
+    return null;
+  }
+
+  // Find boleta for this client in the specified period
+  const boleta = await prisma.boletas.findFirst({
+    where: {
+      cliente_id: cliente.id,
+      periodo_desde: {
+        gte: startDate,
+        lte: endDate,
+      },
+    },
+    select: {
+      id: true,
+      periodo_desde: true,
+      monto_total: true,
+      pdf_path: true,
+    },
+  });
+
+  if (!boleta) {
+    return null;
+  }
+
+  // Build full name
+  const nombreParts = [
+    cliente.primer_nombre,
+    cliente.segundo_nombre,
+    cliente.apellido_paterno,
+    cliente.apellido_materno,
+  ].filter(Boolean);
+  const nombreCompleto = nombreParts.join(' ');
+
+  // Get signed URL if PDF exists
+  let pdfUrl: string | undefined;
+  if (boleta.pdf_path) {
+    try {
+      const { data } = await getSupabase().storage
+        .from(STORAGE_BUCKET)
+        .createSignedUrl(boleta.pdf_path, 3600);
+      pdfUrl = data?.signedUrl;
+    } catch (e) {
+      console.error('Error creating signed URL:', e);
+    }
+  }
+
+  return {
+    cliente: {
+      id: cliente.id.toString(),
+      nombre: nombreCompleto,
+      rut: cliente.rut || '',
+      numeroCliente: cliente.numero_cliente || '',
+    },
+    boleta: {
+      id: boleta.id.toString(),
+      periodo: `${year}-${String(month).padStart(2, '0')}`,
+      montoTotal: Number(boleta.monto_total) || 0,
+      tienePdf: !!boleta.pdf_path,
+    },
+    pdfUrl,
+  };
+}
+
