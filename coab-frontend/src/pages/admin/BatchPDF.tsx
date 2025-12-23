@@ -59,7 +59,7 @@ interface PeriodStats {
   periodoLabel: string;
 }
 
-interface ClientBoletaResult {
+interface ClientBoletaItem {
   cliente: {
     id: string;
     nombre: string;
@@ -71,8 +71,12 @@ interface ClientBoletaResult {
     periodo: string;
     montoTotal: number;
     tienePdf: boolean;
-  };
+  } | null;
   pdfUrl?: string;
+}
+
+interface SearchResponse {
+  resultados: ClientBoletaItem[];
 }
 
 interface StartJobResponse {
@@ -159,18 +163,20 @@ export default function BatchPDFPage() {
 
   // Search client boleta
   const searchEnabled = debouncedQuery.length >= 3 && !!selectedMonth;
-  const { data: searchResult, isLoading: isSearching, error: searchError, isFetching } = useQuery({
+  const { data: searchData, isLoading: isSearching, error: searchError, isFetching } = useQuery({
     queryKey: ['client-boleta-search', debouncedQuery, selectedMonth],
     queryFn: async () => {
       const res = await adminApiClient.get(
         `/admin/clientes/buscar-boleta?q=${encodeURIComponent(debouncedQuery)}&periodo=${selectedMonth}`
       );
-      return res.data as ClientBoletaResult;
+      return res.data as SearchResponse;
     },
     enabled: searchEnabled,
     staleTime: 0,
     retry: false,
   });
+  
+  const searchResults = searchData?.resultados || [];
 
   // Poll for job status
   const { data: jobStatus, isLoading: isLoadingJob } = useQuery({
@@ -427,7 +433,7 @@ export default function BatchPDFPage() {
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <Input
-                    placeholder="Buscar por RUT o N° Cliente..."
+                    placeholder="Buscar por RUT, N° Cliente o Nombre..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
@@ -455,56 +461,73 @@ export default function BatchPDFPage() {
                 </div>
               )}
 
-              {searchResult && !isSearching && (
-                <div className="p-4 bg-slate-50 rounded-lg space-y-3">
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-blue-100 rounded-full">
-                      <User className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium text-slate-900">
-                        {searchResult.cliente.nombre}
-                      </p>
-                      <p className="text-sm text-slate-500">
-                        RUT: {formatearRUT(searchResult.cliente.rut)} • N° {searchResult.cliente.numeroCliente}
-                      </p>
-                      <p className="text-sm text-slate-500 mt-1">
-                        Monto: {formatCurrency(searchResult.boleta.montoTotal)}
-                      </p>
-                    </div>
-                    <div>
-                      {searchResult.boleta.tienePdf ? (
-                        <Button
-                          size="sm"
-                          onClick={() => window.open(searchResult.pdfUrl, '_blank')}
-                          className="bg-emerald-600 hover:bg-emerald-700"
-                        >
-                          <Download className="h-4 w-4 mr-1" />
-                          Descargar
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          onClick={() => generateSingleMutation.mutate(searchResult.boleta.id)}
-                          disabled={generateSingleMutation.isPending}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          {generateSingleMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              {searchResults.length > 0 && !isSearching && (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  <p className="text-sm text-slate-500 mb-2">
+                    {searchResults.length} resultado{searchResults.length !== 1 ? 's' : ''} encontrado{searchResults.length !== 1 ? 's' : ''}
+                  </p>
+                  {searchResults.map((result) => (
+                    <div key={result.cliente.id} className="p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 bg-blue-100 rounded-full flex-shrink-0">
+                          <User className="h-4 w-4 text-blue-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-slate-900 truncate">
+                            {result.cliente.nombre}
+                          </p>
+                          <p className="text-sm text-slate-500">
+                            RUT: {formatearRUT(result.cliente.rut)} • N° {result.cliente.numeroCliente}
+                          </p>
+                          {result.boleta ? (
+                            <p className="text-sm text-slate-500 mt-1">
+                              Monto: {formatCurrency(result.boleta.montoTotal)}
+                            </p>
                           ) : (
-                            <FileText className="h-4 w-4 mr-1" />
+                            <p className="text-sm text-amber-600 mt-1">
+                              Sin boleta para este período
+                            </p>
                           )}
-                          Generar PDF
-                        </Button>
-                      )}
+                        </div>
+                        <div className="flex-shrink-0">
+                          {result.boleta ? (
+                            result.boleta.tienePdf ? (
+                              <Button
+                                size="sm"
+                                onClick={() => window.open(result.pdfUrl, '_blank')}
+                                className="bg-emerald-600 hover:bg-emerald-700"
+                              >
+                                <Download className="h-4 w-4 mr-1" />
+                                PDF
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                onClick={() => generateSingleMutation.mutate(result.boleta!.id)}
+                                disabled={generateSingleMutation.isPending}
+                                className="bg-blue-600 hover:bg-blue-700"
+                              >
+                                {generateSingleMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                ) : (
+                                  <FileText className="h-4 w-4 mr-1" />
+                                )}
+                                Generar
+                              </Button>
+                            )
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               )}
 
-              {debouncedQuery.length >= 3 && !searchResult && !isSearching && !searchError && (
+              {debouncedQuery.length >= 3 && searchResults.length === 0 && !isSearching && !searchError && (
                 <div className="text-center py-4 text-slate-500">
-                  No se encontró cliente o boleta para este período
+                  No se encontraron clientes para "{debouncedQuery}"
                 </div>
               )}
 

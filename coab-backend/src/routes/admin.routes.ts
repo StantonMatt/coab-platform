@@ -89,7 +89,8 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   /**
    * GET /admin/clientes/buscar-boleta?q=...&periodo=YYYY-MM
-   * Search for a client's boleta by RUT or numero_cliente for a specific period
+   * Search for clients and boletas by RUT, numero_cliente, or name for a specific period
+   * Returns up to 10 matching results
    */
   fastify.get('/clientes/buscar-boleta', async (request, reply) => {
     try {
@@ -98,18 +99,10 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         periodo: z.string().regex(/^\d{4}-\d{2}$/, 'Periodo debe tener formato YYYY-MM'),
       }).parse(request.query);
 
-      const result = await pdfService.searchClientBoleta(query.q, query.periodo);
+      const results = await pdfService.searchClientBoleta(query.q, query.periodo);
       
-      if (!result) {
-        return reply.code(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: 'No se encontró cliente o boleta para este período',
-          },
-        });
-      }
-
-      return result;
+      // Return empty array instead of 404 - let frontend handle display
+      return { resultados: results };
     } catch (error: any) {
       if (error instanceof ZodError) {
         return reply.code(400).send({

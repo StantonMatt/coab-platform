@@ -811,13 +811,7 @@ export async function getAvailablePeriods(): Promise<{
   return periodsWithStats;
 }
 
-/**
- * Search for a client's boleta by RUT or numero_cliente for a specific period
- */
-export async function searchClientBoleta(
-  query: string,
-  periodo: string
-): Promise<{
+export interface ClienteBoletaResult {
   cliente: {
     id: string;
     nombre: string;
@@ -829,9 +823,18 @@ export async function searchClientBoleta(
     periodo: string;
     montoTotal: number;
     tienePdf: boolean;
-  };
+  } | null;
   pdfUrl?: string;
-} | null> {
+}
+
+/**
+ * Search for clients and their boletas by RUT, numero_cliente, or name for a specific period
+ * Returns up to 10 matching clients
+ */
+export async function searchClientBoleta(
+  query: string,
+  periodo: string
+): Promise<ClienteBoletaResult[]> {
   const [yearStr, monthStr] = periodo.split('-');
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10);
@@ -841,86 +844,95 @@ export async function searchClientBoleta(
   // Clean query - remove dots and dashes for RUT search
   const cleanQuery = query.replace(/[.\-]/g, '').toUpperCase();
 
-  // Search for client
-  const cliente = await prisma.clientes.findFirst({
+  // Search for clients by RUT, numero_cliente, or name (limit 10)
+  const clientes = await prisma.clientes.findMany({
     where: {
       OR: [
         { rut: { contains: cleanQuery, mode: 'insensitive' } },
-        { numero_cliente: { equals: query } },
+        { numero_cliente: { startsWith: query } }, // Changed to startsWith for better UX
+        { primer_nombre: { startsWith: query, mode: 'insensitive' } }, // Changed to startsWith
+        { primer_apellido: { startsWith: query, mode: 'insensitive' } }, // Changed to startsWith
       ],
     },
     select: {
       id: true,
       primer_nombre: true,
       segundo_nombre: true,
-      apellido_paterno: true,
-      apellido_materno: true,
+      primer_apellido: true,
+      segundo_apellido: true,
       rut: true,
       numero_cliente: true,
     },
+    take: 10,
+    orderBy: { numero_cliente: 'asc' },
   });
 
-  if (!cliente) {
-    return null;
+  if (clientes.length === 0) {
+    return [];
   }
 
-  // Find boleta for this client in the specified period
-  const boleta = await prisma.boletas.findFirst({
-    where: {
-      cliente_id: cliente.id,
-      periodo_desde: {
-        gte: startDate,
-        lte: endDate,
-      },
-    },
-    select: {
-      id: true,
-      periodo_desde: true,
-      monto_total: true,
-      pdf_path: true,
-    },
-  });
+  // Fetch boletas for all matching clients in parallel
+  const results: ClienteBoletaResult[] = await Promise.all(
+    clientes.map(async (cliente) => {
+      // Build full name
+      const nombreParts = [
+        cliente.primer_nombre,
+        cliente.segundo_nombre,
+        cliente.primer_apellido,
+        cliente.segundo_apellido,
+      ].filter(Boolean);
+      const nombreCompleto = nombreParts.join(' ');
 
-  if (!boleta) {
-    return null;
-  }
+      // Find boleta for this client in the specified period
+      const boleta = await prisma.boletas.findFirst({
+        where: {
+          cliente_id: cliente.id,
+          periodo_desde: {
+            gte: startDate,
+            lte: endDate,
+          },
+        },
+        select: {
+          id: true,
+          periodo_desde: true,
+          monto_total: true,
+          pdf_path: true,
+        },
+      });
 
-  // Build full name
-  const nombreParts = [
-    cliente.primer_nombre,
-    cliente.segundo_nombre,
-    cliente.apellido_paterno,
-    cliente.apellido_materno,
-  ].filter(Boolean);
-  const nombreCompleto = nombreParts.join(' ');
+      // Get signed URL if PDF exists
+      let pdfUrl: string | undefined;
+      if (boleta?.pdf_path) {
+        try {
+          const { data } = await getSupabase().storage
+            .from(STORAGE_BUCKET)
+            .createSignedUrl(boleta.pdf_path, 3600);
+          pdfUrl = data?.signedUrl;
+        } catch (e) {
+          console.error('Error creating signed URL:', e);
+        }
+      }
 
-  // Get signed URL if PDF exists
-  let pdfUrl: string | undefined;
-  if (boleta.pdf_path) {
-    try {
-      const { data } = await getSupabase().storage
-        .from(STORAGE_BUCKET)
-        .createSignedUrl(boleta.pdf_path, 3600);
-      pdfUrl = data?.signedUrl;
-    } catch (e) {
-      console.error('Error creating signed URL:', e);
-    }
-  }
+      return {
+        cliente: {
+          id: cliente.id.toString(),
+          nombre: nombreCompleto,
+          rut: cliente.rut || '',
+          numeroCliente: cliente.numero_cliente || '',
+        },
+        boleta: boleta
+          ? {
+              id: boleta.id.toString(),
+              periodo: `${year}-${String(month).padStart(2, '0')}`,
+              montoTotal: Number(boleta.monto_total) || 0,
+              tienePdf: !!boleta.pdf_path,
+            }
+          : null,
+        pdfUrl,
+      };
+    })
+  );
 
-  return {
-    cliente: {
-      id: cliente.id.toString(),
-      nombre: nombreCompleto,
-      rut: cliente.rut || '',
-      numeroCliente: cliente.numero_cliente || '',
-    },
-    boleta: {
-      id: boleta.id.toString(),
-      periodo: `${year}-${String(month).padStart(2, '0')}`,
-      montoTotal: Number(boleta.monto_total) || 0,
-      tienePdf: !!boleta.pdf_path,
-    },
-    pdfUrl,
-  };
+  return results;
 }
 
