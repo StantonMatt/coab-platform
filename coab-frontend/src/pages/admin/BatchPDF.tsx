@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,7 +19,6 @@ import {
   Clock,
   AlertCircle,
   StopCircle,
-  Archive,
   Search,
   User,
 } from 'lucide-react';
@@ -105,7 +104,6 @@ export default function BatchPDFPage() {
   
   const [selectedMonth, setSelectedMonth] = useState('');
   const [regenerate, setRegenerate] = useState(false);
-  const [generateZip, setGenerateZip] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   
@@ -148,30 +146,36 @@ export default function BatchPDFPage() {
     }
   }, [availablePeriods, selectedMonth]);
 
-  // Fetch period stats when month changes
-  const { data: periodStats, isLoading: isLoadingStats } = useQuery({
+  // Fetch period stats when month changes - ALWAYS fetch, not just when no job
+  const { data: periodStats, isLoading: isLoadingStats, refetch: refetchStats } = useQuery({
     queryKey: ['period-stats', selectedMonth],
     queryFn: async () => {
       if (!selectedMonth) return null;
       const res = await adminApiClient.get(`/admin/boletas/periodo-stats?periodo=${selectedMonth}`);
       return res.data as PeriodStats;
     },
-    enabled: !!selectedMonth && !currentJobId,
+    enabled: !!selectedMonth,
   });
 
   // Search client boleta
-  const { data: searchResult, isLoading: isSearching } = useQuery({
+  const searchEnabled = debouncedQuery.length >= 3 && !!selectedMonth;
+  const { data: searchResult, isLoading: isSearching, error: searchError, isFetching } = useQuery({
     queryKey: ['client-boleta-search', debouncedQuery, selectedMonth],
     queryFn: async () => {
-      if (!debouncedQuery || !selectedMonth) return null;
+      console.log('Search query executing:', { debouncedQuery, selectedMonth });
       const res = await adminApiClient.get(
         `/admin/clientes/buscar-boleta?q=${encodeURIComponent(debouncedQuery)}&periodo=${selectedMonth}`
       );
+      console.log('Search result:', res.data);
       return res.data as ClientBoletaResult;
     },
-    enabled: debouncedQuery.length >= 3 && !!selectedMonth,
+    enabled: searchEnabled,
+    staleTime: 0,
     retry: false,
   });
+  
+  // Debug log
+  console.log('Search state:', { searchQuery, debouncedQuery, selectedMonth, searchEnabled, isSearching, isFetching });
 
   // Poll for job status
   const { data: jobStatus, isLoading: isLoadingJob } = useQuery({
@@ -185,7 +189,7 @@ export default function BatchPDFPage() {
     refetchInterval: isPolling ? 2000 : false,
   });
 
-  // Stop polling when job completes
+  // Stop polling when job completes and AUTO-RESET state
   useEffect(() => {
     if (jobStatus && ['completado', 'error', 'cancelado'].includes(jobStatus.estado)) {
       setIsPolling(false);
@@ -195,30 +199,41 @@ export default function BatchPDFPage() {
           title: 'Generación completada',
           description: `Se generaron ${jobStatus.exitosos} PDFs exitosamente`,
         });
+        // Refresh stats and available periods
         queryClient.invalidateQueries({ queryKey: ['period-stats'] });
         queryClient.invalidateQueries({ queryKey: ['available-periods'] });
+        
+        // Auto-reset after a short delay so user sees completion message
+        setTimeout(() => {
+          setCurrentJobId(null);
+        }, 3000);
       } else if (jobStatus.estado === 'error') {
         toast({
           variant: 'destructive',
           title: 'Error en la generación',
           description: 'El trabajo terminó con errores',
         });
+        // Auto-reset on error too
+        setTimeout(() => {
+          setCurrentJobId(null);
+        }, 3000);
       } else if (jobStatus.estado === 'cancelado') {
         toast({
           title: 'Trabajo cancelado',
           description: 'La generación fue cancelada',
         });
+        setCurrentJobId(null);
       }
     }
   }, [jobStatus, toast, queryClient]);
 
-  // Start generation mutation
+  // Start generation mutation - No ZIP, just generate PDFs
   const startMutation = useMutation({
     mutationFn: async () => {
       const res = await adminApiClient.post('/admin/boletas/generar-pdfs', {
         periodo: selectedMonth,
         regenerar: regenerate,
-        generarZip: generateZip,
+        generarZip: false, // Never generate ZIP
       });
       return res.data as StartJobResponse;
     },
@@ -244,7 +259,7 @@ export default function BatchPDFPage() {
     },
     onSuccess: () => {
       setIsPolling(false);
-      queryClient.invalidateQueries({ queryKey: ['job-status', currentJobId] });
+      setCurrentJobId(null);
     },
     onError: (error: any) => {
       toast({
@@ -272,6 +287,8 @@ export default function BatchPDFPage() {
         description: 'El PDF se generó exitosamente',
       });
       queryClient.invalidateQueries({ queryKey: ['client-boleta-search'] });
+      queryClient.invalidateQueries({ queryKey: ['period-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['available-periods'] });
       // Open the PDF
       if (data.pdfUrl) {
         window.open(data.pdfUrl, '_blank');
@@ -286,57 +303,6 @@ export default function BatchPDFPage() {
       });
     },
   });
-
-  // Download ZIP
-  const handleDownload = useCallback(async () => {
-    if (!currentJobId) return;
-    
-    try {
-      const res = await adminApiClient.get(`/admin/jobs/${currentJobId}/download`);
-      if (res.data?.url) {
-        window.open(res.data.url, '_blank');
-      }
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description:
-          error.response?.data?.error?.message || 'Error al descargar ZIP',
-      });
-    }
-  }, [currentJobId, toast]);
-
-  // Download existing PDFs as ZIP (trigger generation with ZIP only)
-  const handleDownloadExisting = async () => {
-    try {
-      const res = await adminApiClient.post('/admin/boletas/generar-pdfs', {
-        periodo: selectedMonth,
-        regenerar: false,
-        generarZip: true,
-      });
-      setCurrentJobId(res.data.jobId);
-      setIsPolling(true);
-      toast({
-        title: 'Generando ZIP',
-        description: 'Preparando archivo para descargar...',
-      });
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description:
-          error.response?.data?.error?.message || 'Error al generar ZIP',
-      });
-    }
-  };
-
-  // Reset to start new job
-  const handleStartNew = () => {
-    setCurrentJobId(null);
-    setIsPolling(false);
-    queryClient.invalidateQueries({ queryKey: ['period-stats'] });
-    queryClient.invalidateQueries({ queryKey: ['available-periods'] });
-  };
 
   const isActive = startMutation.isPending || (jobStatus?.estado === 'pendiente') || (jobStatus?.estado === 'procesando');
   const isComplete = jobStatus?.estado === 'completado';
@@ -395,14 +361,18 @@ export default function BatchPDFPage() {
             ) : (
               <MonthYearPicker
                 selectedPeriodo={selectedMonth}
-                onSelect={setSelectedMonth}
+                onSelect={(periodo) => {
+                  setSelectedMonth(periodo);
+                  // Force refetch stats when month changes
+                  setTimeout(() => refetchStats(), 100);
+                }}
                 availablePeriods={availablePeriods}
-                isLoading={hasJob && !jobFinished}
+                isLoading={isActive}
               />
             )}
 
-            {/* Period Stats */}
-            {!hasJob && selectedMonth && (
+            {/* Period Stats - ALWAYS show when month selected */}
+            {selectedMonth && (
               <div className="p-4 bg-slate-50 rounded-lg space-y-3">
                 {isLoadingStats ? (
                   <div className="flex items-center gap-2 text-slate-500">
@@ -432,25 +402,12 @@ export default function BatchPDFPage() {
                         <p className="text-xs text-blue-600">Sin PDF</p>
                       </div>
                     </div>
-                    
-                    {/* Download Existing Button */}
-                    {periodStats.conPdf > 0 && (
-                      <Button
-                        variant="outline"
-                        onClick={handleDownloadExisting}
-                        disabled={startMutation.isPending}
-                        className="w-full"
-                      >
-                        <Download className="h-4 w-4 mr-2" />
-                        Descargar {periodStats.conPdf} PDFs existentes (ZIP)
-                      </Button>
-                    )}
 
-                    {allGenerated && (
+                    {allGenerated && !hasJob && (
                       <div className="flex items-center gap-2 text-emerald-700">
                         <CheckCircle className="h-4 w-4" />
                         <span className="text-sm">
-                          Todos los PDFs ya están generados
+                          Todos los PDFs ya están generados. Descárgalos desde Supabase Storage.
                         </span>
                       </div>
                     )}
@@ -461,8 +418,8 @@ export default function BatchPDFPage() {
           </CardContent>
         </Card>
 
-        {/* Client Search Card */}
-        {selectedMonth && !hasJob && (
+        {/* Client Search Card - ALWAYS visible */}
+        {selectedMonth && (
           <Card className="border-slate-200 shadow-sm">
             <CardHeader>
               <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
@@ -471,18 +428,38 @@ export default function BatchPDFPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <Input
-                  placeholder="Buscar por RUT o N° Cliente..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    placeholder="Buscar por RUT o N° Cliente..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      console.log('Input changed:', e.target.value);
+                      setSearchQuery(e.target.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setDebouncedQuery(searchQuery);
+                      }
+                    }}
+                    className="pl-10"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    console.log('Search button clicked, query:', searchQuery);
+                    setDebouncedQuery(searchQuery);
+                  }}
+                  disabled={searchQuery.length < 3}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
               </div>
 
               {/* Search Results */}
-              {isSearching && (
+              {(isSearching || isFetching) && searchEnabled && (
                 <div className="flex items-center gap-2 text-slate-500 py-4">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   <span>Buscando...</span>
@@ -536,9 +513,21 @@ export default function BatchPDFPage() {
                 </div>
               )}
 
-              {debouncedQuery.length >= 3 && !searchResult && !isSearching && (
+              {debouncedQuery.length >= 3 && !searchResult && !isSearching && !searchError && (
                 <div className="text-center py-4 text-slate-500">
                   No se encontró cliente o boleta para este período
+                </div>
+              )}
+
+              {searchError && (
+                <div className="text-center py-4 text-amber-600">
+                  No se encontró cliente o boleta para este período
+                </div>
+              )}
+
+              {debouncedQuery.length > 0 && debouncedQuery.length < 3 && (
+                <div className="text-center py-2 text-slate-400 text-sm">
+                  Ingrese al menos 3 caracteres para buscar
                 </div>
               )}
             </CardContent>
@@ -555,56 +544,29 @@ export default function BatchPDFPage() {
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Options */}
-            <div className="space-y-4">
-              {/* Regenerate Toggle */}
-              <div className="flex items-center gap-3">
-                <Switch
-                  id="regenerate"
-                  checked={regenerate}
-                  onCheckedChange={setRegenerate}
-                  disabled={hasJob && !jobFinished}
-                />
-                <div>
-                  <label
-                    htmlFor="regenerate"
-                    className={`text-sm font-medium cursor-pointer ${
-                      hasJob && !jobFinished ? 'text-slate-400' : 'text-slate-700'
-                    }`}
-                  >
-                    Regenerar existentes
-                  </label>
-                  <p className="text-xs text-slate-500">
-                    Sobrescribe PDFs que ya existen
-                  </p>
+            {!hasJob && (
+              <div className="space-y-4">
+                {/* Regenerate Toggle */}
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id="regenerate"
+                    checked={regenerate}
+                    onCheckedChange={setRegenerate}
+                  />
+                  <div>
+                    <label
+                      htmlFor="regenerate"
+                      className="text-sm font-medium cursor-pointer text-slate-700"
+                    >
+                      Regenerar existentes
+                    </label>
+                    <p className="text-xs text-slate-500">
+                      Sobrescribe PDFs que ya existen
+                    </p>
+                  </div>
                 </div>
               </div>
-
-              {/* Generate ZIP Toggle */}
-              <div className="flex items-center gap-3">
-                <Switch
-                  id="generateZip"
-                  checked={generateZip}
-                  onCheckedChange={setGenerateZip}
-                  disabled={hasJob && !jobFinished}
-                />
-                <div>
-                  <label
-                    htmlFor="generateZip"
-                    className={`text-sm font-medium cursor-pointer ${
-                      hasJob && !jobFinished ? 'text-slate-400' : 'text-slate-700'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1">
-                      <Archive className="h-4 w-4" />
-                      Generar archivo ZIP
-                    </span>
-                  </label>
-                  <p className="text-xs text-slate-500">
-                    Crea un archivo ZIP para descargar (toma más tiempo)
-                  </p>
-                </div>
-              </div>
-            </div>
+            )}
 
             {/* Generate Button */}
             {!hasJob && (
@@ -631,7 +593,7 @@ export default function BatchPDFPage() {
 
             {/* Inline Progress Section */}
             {hasJob && (
-              <div className="pt-4 border-t border-slate-200 space-y-4">
+              <div className="space-y-4">
                 {/* Loading state */}
                 {isLoadingJob && !jobStatus && (
                   <div className="flex items-center gap-3 text-slate-600">
@@ -681,11 +643,6 @@ export default function BatchPDFPage() {
                       <Progress 
                         value={jobStatus.porcentaje} 
                         className="h-2"
-                        indicatorClassName={
-                          hasError ? 'bg-red-500' : 
-                          isCancelled ? 'bg-amber-500' : 
-                          isComplete ? 'bg-emerald-500' : 'bg-blue-600'
-                        }
                       />
                     </div>
 
@@ -721,7 +678,7 @@ export default function BatchPDFPage() {
                     {isComplete && (
                       <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-50 text-emerald-800 text-sm">
                         <CheckCircle className="h-4 w-4 flex-shrink-0" />
-                        <span>Generación completada exitosamente</span>
+                        <span>Generación completada. Los PDFs están disponibles en Supabase Storage.</span>
                       </div>
                     )}
 
@@ -780,24 +737,6 @@ export default function BatchPDFPage() {
                           Cancelar
                         </Button>
                       )}
-
-                      {isComplete && jobStatus.zipPath && (
-                        <Button
-                          size="sm"
-                          onClick={handleDownload}
-                          className="bg-emerald-600 hover:bg-emerald-700"
-                        >
-                          <Download className="h-4 w-4 mr-2" />
-                          Descargar ZIP
-                        </Button>
-                      )}
-
-                      {jobFinished && (
-                        <Button variant="outline" size="sm" onClick={handleStartNew}>
-                          <RefreshCw className="h-4 w-4 mr-2" />
-                          Nuevo Trabajo
-                        </Button>
-                      )}
                     </div>
                   </>
                 )}
@@ -813,8 +752,9 @@ export default function BatchPDFPage() {
             <ul className="text-sm text-blue-800 space-y-1">
               <li>• Solo se muestran meses que tienen lecturas registradas</li>
               <li>• Los meses con ✓ tienen todos los PDFs generados</li>
-              <li>• Use la búsqueda para descargar o generar una boleta individual</li>
-              <li>• Los clientes pueden descargar sus boletas desde el portal</li>
+              <li>• Use la búsqueda para generar o descargar una boleta individual</li>
+              <li>• Para descargar múltiples PDFs, use Supabase Storage directamente</li>
+              <li>• Los clientes pueden descargar sus boletas desde su portal</li>
             </ul>
           </CardContent>
         </Card>
