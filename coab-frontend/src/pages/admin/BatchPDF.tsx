@@ -162,20 +162,15 @@ export default function BatchPDFPage() {
   const { data: searchResult, isLoading: isSearching, error: searchError, isFetching } = useQuery({
     queryKey: ['client-boleta-search', debouncedQuery, selectedMonth],
     queryFn: async () => {
-      console.log('Search query executing:', { debouncedQuery, selectedMonth });
       const res = await adminApiClient.get(
         `/admin/clientes/buscar-boleta?q=${encodeURIComponent(debouncedQuery)}&periodo=${selectedMonth}`
       );
-      console.log('Search result:', res.data);
       return res.data as ClientBoletaResult;
     },
     enabled: searchEnabled,
     staleTime: 0,
     retry: false,
   });
-  
-  // Debug log
-  console.log('Search state:', { searchQuery, debouncedQuery, selectedMonth, searchEnabled, isSearching, isFetching });
 
   // Poll for job status
   const { data: jobStatus, isLoading: isLoadingJob } = useQuery({
@@ -434,10 +429,7 @@ export default function BatchPDFPage() {
                   <Input
                     placeholder="Buscar por RUT o N° Cliente..."
                     value={searchQuery}
-                    onChange={(e) => {
-                      console.log('Input changed:', e.target.value);
-                      setSearchQuery(e.target.value);
-                    }}
+                    onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         setDebouncedQuery(searchQuery);
@@ -448,10 +440,7 @@ export default function BatchPDFPage() {
                 </div>
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    console.log('Search button clicked, query:', searchQuery);
-                    setDebouncedQuery(searchQuery);
-                  }}
+                  onClick={() => setDebouncedQuery(searchQuery)}
                   disabled={searchQuery.length < 3}
                 >
                   <Search className="h-4 w-4" />
