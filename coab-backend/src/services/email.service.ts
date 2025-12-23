@@ -93,6 +93,59 @@ export async function sendEmail(
 }
 
 /**
+ * Send verification code email for contact changes
+ */
+export async function sendVerificationEmail(
+  email: string,
+  code: string
+): Promise<EmailResult> {
+  const subject = `Tu código de verificación COAB: ${code}`;
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #0066CC 0%, #004499 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
+    <h1 style="margin: 0; font-size: 24px;">Código de Verificación</h1>
+  </div>
+  
+  <div style="background: #f9f9f9; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px;">
+    <p>Has solicitado cambiar tu correo electrónico en COAB.</p>
+    
+    <div style="background: white; border: 2px solid #0066CC; border-radius: 12px; padding: 25px; margin: 25px 0; text-align: center;">
+      <p style="margin: 0 0 10px; color: #666; font-size: 14px;">Tu código de verificación es:</p>
+      <p style="margin: 0; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #0066CC;">${code}</p>
+    </div>
+    
+    <p style="color: #666; font-size: 14px;">Este código expira en <strong>10 minutos</strong>.</p>
+    
+    <p style="color: #888; font-size: 13px;">Si no solicitaste este cambio, puedes ignorar este correo de forma segura.</p>
+    
+    <p style="margin-top: 30px; color: #888; font-size: 12px;">
+      Este es un mensaje automático, por favor no respondas a este correo.
+    </p>
+  </div>
+  
+  <div style="text-align: center; padding: 20px; color: #888; font-size: 12px;">
+    <p>COAB - Cooperativa de Agua Bellavista</p>
+  </div>
+</body>
+</html>`;
+
+  const textContent = `Tu código de verificación COAB es: ${code}
+
+Este código expira en 10 minutos.
+
+Si no solicitaste este cambio, ignora este correo.`;
+
+  return sendEmail(email, subject, htmlContent, textContent);
+}
+
+/**
  * Send auto-payment success notification
  */
 export async function sendAutoPaymentSuccess(

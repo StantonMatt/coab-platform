@@ -125,6 +125,89 @@ export async function sendWhatsAppMessage(
 }
 
 /**
+ * Send SMS via Twilio (for verification codes)
+ */
+export async function sendSMS(
+  phone: string,
+  message: string
+): Promise<WhatsAppResult> {
+  const TWILIO_ACCOUNT_SID = env.TWILIO_ACCOUNT_SID;
+  const TWILIO_AUTH_TOKEN = env.TWILIO_AUTH_TOKEN;
+  const TWILIO_PHONE_NUMBER = env.TWILIO_PHONE_NUMBER;
+
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+    console.warn('Twilio SMS not configured - message not sent');
+    return {
+      success: false,
+      error: 'SMS no configurado',
+    };
+  }
+
+  const formattedPhone = formatChileanPhone(phone);
+  if (!formattedPhone) {
+    return {
+      success: false,
+      error: `Número de teléfono inválido: ${phone}`,
+    };
+  }
+
+  try {
+    const authHeader = Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64');
+
+    console.log(`Twilio SMS: Sending to ${formattedPhone} from ${TWILIO_PHONE_NUMBER}`);
+    
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${authHeader}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          From: TWILIO_PHONE_NUMBER,
+          To: formattedPhone,
+          Body: message,
+        }),
+      }
+    );
+
+    const data = (await response.json()) as TwilioResponse;
+    console.log('Twilio SMS response:', JSON.stringify(data, null, 2));
+
+    if (response.ok && data.sid) {
+      return {
+        success: true,
+        messageId: data.sid,
+      };
+    }
+
+    const errorMsg = data.error_message || `Error ${data.error_code || response.status}`;
+    console.error('Twilio SMS error:', errorMsg);
+    return {
+      success: false,
+      error: errorMsg,
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * Send verification code via SMS
+ */
+export async function sendVerificationSMS(
+  phone: string,
+  code: string
+): Promise<WhatsAppResult> {
+  const message = `COAB: Tu código de verificación es ${code}. Válido por 10 minutos.`;
+  return sendSMS(phone, message);
+}
+
+/**
  * Send password setup link via WhatsApp
  */
 export async function sendSetupLinkViaWhatsApp(

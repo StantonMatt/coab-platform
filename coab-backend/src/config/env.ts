@@ -17,10 +17,11 @@ const envSchema = z.object({
   // Authentication
   JWT_SECRET: z.string().min(32, 'JWT_SECRET debe tener al menos 32 caracteres'),
 
-  // Optional: Twilio WhatsApp
+  // Optional: Twilio WhatsApp & SMS
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_WHATSAPP_FROM: z.string().optional(),
+  TWILIO_PHONE_NUMBER: z.string().optional(), // For SMS verification codes
 
   // Optional: Twilio SendGrid Email
   SENDGRID_API_KEY: z.string().optional(),

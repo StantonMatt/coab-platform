@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import apiClient from '@/lib/api';
+import VerificationModal from '@/components/VerificationModal';
 import {
   ArrowLeft,
   Mail,
@@ -22,6 +23,7 @@ import {
   Check,
   X,
   Loader2,
+  Edit2,
 } from 'lucide-react';
 
 // ============================================================================
@@ -49,19 +51,6 @@ interface SavedCard {
 // Schemas
 // ============================================================================
 
-const updateProfileSchema = z.object({
-  correo: z
-    .string()
-    .email('Correo electrónico inválido')
-    .optional()
-    .or(z.literal('')),
-  telefono: z
-    .string()
-    .regex(/^[0-9]{9}$/, 'Debe tener 9 dígitos (ej: 912345678)')
-    .optional()
-    .or(z.literal('')),
-});
-
 const changePasswordSchema = z
   .object({
     contrasenaActual: z.string().min(1, 'Contraseña actual requerida'),
@@ -78,7 +67,6 @@ const changePasswordSchema = z
     path: ['confirmarContrasena'],
   });
 
-type UpdateProfileForm = z.infer<typeof updateProfileSchema>;
 type ChangePasswordForm = z.infer<typeof changePasswordSchema>;
 
 // ============================================================================
@@ -89,6 +77,18 @@ export default function ProfilePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  // Editing state for contact info
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
+  const [isEditingPhone, setIsEditingPhone] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+
+  // Verification modal state
+  const [verificationModalOpen, setVerificationModalOpen] = useState(false);
+  const [verificationType, setVerificationType] = useState<'email' | 'telefono'>('email');
+  const [verificationValue, setVerificationValue] = useState('');
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
   // Password visibility toggles
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
@@ -140,14 +140,6 @@ export default function ProfilePage() {
   // Forms
   // =========================================================================
 
-  const profileForm = useForm<UpdateProfileForm>({
-    resolver: zodResolver(updateProfileSchema),
-    defaultValues: {
-      correo: '',
-      telefono: '',
-    },
-  });
-
   const passwordForm = useForm<ChangePasswordForm>({
     resolver: zodResolver(changePasswordSchema),
     defaultValues: {
@@ -157,47 +149,64 @@ export default function ProfilePage() {
     },
   });
 
-  // Set initial form values when profile loads
-  // Strip +56 prefix from phone for display (user only sees 9 digits)
-  useEffect(() => {
-    if (profile) {
-      let telefono = profile.telefono || '';
-      // Remove +56 or 56 prefix if present
-      if (telefono.startsWith('+56')) {
-        telefono = telefono.slice(3);
-      } else if (telefono.startsWith('56') && telefono.length > 9) {
-        telefono = telefono.slice(2);
-      }
-      profileForm.reset({
-        correo: profile.email || '',
-        telefono: telefono,
-      });
-    }
-  }, [profile, profileForm]);
-
   // =========================================================================
   // Mutations
   // =========================================================================
 
-  const updateProfileMutation = useMutation({
-    mutationFn: async (data: UpdateProfileForm) => {
-      const res = await apiClient.put('/clientes/me', data);
+  // Initiate verification (send code)
+  const initiateVerificationMutation = useMutation({
+    mutationFn: async (data: { tipo: 'email' | 'telefono'; nuevoValor: string }) => {
+      const res = await apiClient.post('/clientes/me/verificar-contacto', data);
       return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['profile'] });
+    onSuccess: (_data, variables) => {
+      setVerificationType(variables.tipo);
+      setVerificationValue(variables.nuevoValor);
+      setVerificationError(null);
+      setVerificationModalOpen(true);
       toast({
-        title: 'Perfil actualizado',
-        description: 'Tu información de contacto ha sido actualizada.',
+        title: 'Código enviado',
+        description:
+          variables.tipo === 'email'
+            ? `Revisa tu correo ${variables.nuevoValor}`
+            : `Código enviado por SMS a ${variables.nuevoValor}`,
       });
     },
     onError: (error: any) => {
       toast({
         title: 'Error',
         description:
-          error.response?.data?.error?.message || 'Error al actualizar perfil',
+          error.response?.data?.error?.message || 'Error al enviar código',
         variant: 'destructive',
       });
+    },
+  });
+
+  // Confirm verification (submit code)
+  const confirmVerificationMutation = useMutation({
+    mutationFn: async (data: { tipo: 'email' | 'telefono'; codigo: string }) => {
+      const res = await apiClient.post('/clientes/me/confirmar-contacto', data);
+      return res.data;
+    },
+    onSuccess: () => {
+      setVerificationModalOpen(false);
+      setIsEditingEmail(false);
+      setIsEditingPhone(false);
+      setNewEmail('');
+      setNewPhone('');
+      queryClient.invalidateQueries({ queryKey: ['profile'] });
+      toast({
+        title: 'Actualizado',
+        description:
+          verificationType === 'email'
+            ? 'Correo electrónico actualizado exitosamente.'
+            : 'Teléfono actualizado exitosamente.',
+      });
+    },
+    onError: (error: any) => {
+      setVerificationError(
+        error.response?.data?.error?.message || 'Código incorrecto'
+      );
     },
   });
 
@@ -258,22 +267,72 @@ export default function ProfilePage() {
   // Handlers
   // =========================================================================
 
-  const handleProfileSubmit = (data: UpdateProfileForm) => {
-    // Only submit if at least one field has changed
-    if (!data.correo && !data.telefono) {
+  // Start editing email
+  const handleEditEmail = () => {
+    setIsEditingEmail(true);
+    setNewEmail(profile?.email || '');
+  };
+
+  // Start editing phone
+  const handleEditPhone = () => {
+    setIsEditingPhone(true);
+    // Strip +56 prefix for display
+    let phone = profile?.telefono || '';
+    if (phone.startsWith('+56')) {
+      phone = phone.slice(3);
+    } else if (phone.startsWith('56') && phone.length > 9) {
+      phone = phone.slice(2);
+    }
+    setNewPhone(phone);
+  };
+
+  // Send verification code for email
+  const handleSendEmailCode = () => {
+    if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
       toast({
-        title: 'Sin cambios',
-        description: 'Ingrese al menos un campo para actualizar.',
+        title: 'Error',
+        description: 'Ingresa un correo electrónico válido',
         variant: 'destructive',
       });
       return;
     }
-    // Prepend +56 to phone number before sending
-    const submitData = {
-      ...data,
-      telefono: data.telefono ? `+56${data.telefono}` : undefined,
-    };
-    updateProfileMutation.mutate(submitData);
+    initiateVerificationMutation.mutate({
+      tipo: 'email',
+      nuevoValor: newEmail.toLowerCase().trim(),
+    });
+  };
+
+  // Send verification code for phone
+  const handleSendPhoneCode = () => {
+    if (!newPhone || !/^[0-9]{9}$/.test(newPhone)) {
+      toast({
+        title: 'Error',
+        description: 'Ingresa un número de 9 dígitos',
+        variant: 'destructive',
+      });
+      return;
+    }
+    initiateVerificationMutation.mutate({
+      tipo: 'telefono',
+      nuevoValor: `+56${newPhone}`,
+    });
+  };
+
+  // Confirm verification code
+  const handleConfirmCode = async (codigo: string) => {
+    confirmVerificationMutation.mutate({
+      tipo: verificationType,
+      codigo,
+    });
+  };
+
+  // Resend verification code
+  const handleResendCode = async () => {
+    setVerificationError(null);
+    initiateVerificationMutation.mutate({
+      tipo: verificationType,
+      nuevoValor: verificationValue,
+    });
   };
 
   const handlePasswordSubmit = (data: ChangePasswordForm) => {
@@ -293,6 +352,14 @@ export default function ProfilePage() {
     hasUppercase: /[A-Z]/.test(newPassword || ''),
     hasLowercase: /[a-z]/.test(newPassword || ''),
     hasNumber: /[0-9]/.test(newPassword || ''),
+  };
+
+  // Format phone for display
+  const formatPhoneDisplay = (phone: string | null | undefined) => {
+    if (!phone) return 'No configurado';
+    if (phone.startsWith('+56')) return phone;
+    if (phone.startsWith('56') && phone.length > 9) return `+${phone}`;
+    return `+56${phone}`;
   };
 
   if (profileLoading) {
@@ -328,70 +395,129 @@ export default function ProfilePage() {
               Información de Contacto
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <form
-              onSubmit={profileForm.handleSubmit(handleProfileSubmit)}
-              className="space-y-4"
-            >
-              <div className="space-y-2">
-                <Label htmlFor="correo">Correo Electrónico</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
-                    id="correo"
-                    type="email"
-                    placeholder="correo@ejemplo.com"
-                    className="pl-10"
-                    {...profileForm.register('correo')}
-                  />
-                </div>
-                {profileForm.formState.errors.correo && (
-                  <p className="text-sm text-red-500">
-                    {profileForm.formState.errors.correo.message}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="telefono">Teléfono</Label>
-                <div className="flex">
-                  {/* Fixed +56 prefix */}
-                  <div className="flex items-center px-3 bg-gray-100 border border-r-0 rounded-l-md text-gray-600 text-sm font-medium">
-                    <Phone className="h-4 w-4 mr-2 text-gray-400" />
-                    +56
+          <CardContent className="space-y-4">
+            {/* Email Field */}
+            <div className="space-y-2">
+              <Label>Correo Electrónico</Label>
+              {isEditingEmail ? (
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      type="email"
+                      placeholder="correo@ejemplo.com"
+                      className="pl-10"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                    />
                   </div>
-                  <Input
-                    id="telefono"
-                    type="tel"
-                    inputMode="numeric"
-                    placeholder="912345678"
-                    maxLength={9}
-                    className="rounded-l-none"
-                    {...profileForm.register('telefono')}
-                  />
+                  <Button
+                    onClick={handleSendEmailCode}
+                    disabled={initiateVerificationMutation.isPending}
+                  >
+                    {initiateVerificationMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'Enviar Código'
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setIsEditingEmail(false);
+                      setNewEmail('');
+                    }}
+                  >
+                    Cancelar
+                  </Button>
                 </div>
-                {profileForm.formState.errors.telefono && (
-                  <p className="text-sm text-red-500">
-                    {profileForm.formState.errors.telefono.message}
-                  </p>
-                )}
-              </div>
+              ) : (
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Mail className="h-5 w-5 text-gray-400" />
+                    <span className={profile?.email ? '' : 'text-gray-400 italic'}>
+                      {profile?.email || 'No configurado'}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleEditEmail}
+                    className="text-blue-600 hover:text-blue-700"
+                  >
+                    <Edit2 className="h-4 w-4 mr-1" />
+                    Editar
+                  </Button>
+                </div>
+              )}
+            </div>
 
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={updateProfileMutation.isPending}
-              >
-                {updateProfileMutation.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Guardando...
-                  </>
-                ) : (
-                  'Guardar Cambios'
-                )}
-              </Button>
-            </form>
+            {/* Phone Field */}
+            <div className="space-y-2">
+              <Label>Teléfono</Label>
+              {isEditingPhone ? (
+                <div className="flex gap-2">
+                  <div className="flex flex-1">
+                    <div className="flex items-center px-3 bg-gray-100 border border-r-0 rounded-l-md text-gray-600 text-sm font-medium">
+                      <Phone className="h-4 w-4 mr-2 text-gray-400" />
+                      +56
+                    </div>
+                    <Input
+                      type="tel"
+                      inputMode="numeric"
+                      placeholder="912345678"
+                      maxLength={9}
+                      className="rounded-l-none"
+                      value={newPhone}
+                      onChange={(e) =>
+                        setNewPhone(e.target.value.replace(/\D/g, ''))
+                      }
+                    />
+                  </div>
+                  <Button
+                    onClick={handleSendPhoneCode}
+                    disabled={initiateVerificationMutation.isPending}
+                  >
+                    {initiateVerificationMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'Enviar Código'
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setIsEditingPhone(false);
+                      setNewPhone('');
+                    }}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Phone className="h-5 w-5 text-gray-400" />
+                    <span className={profile?.telefono ? '' : 'text-gray-400 italic'}>
+                      {formatPhoneDisplay(profile?.telefono)}
+                    </span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleEditPhone}
+                    className="text-blue-600 hover:text-blue-700"
+                  >
+                    <Edit2 className="h-4 w-4 mr-1" />
+                    Editar
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-gray-500 mt-2">
+              Los cambios de correo o teléfono requieren verificación con un código enviado al nuevo contacto.
+            </p>
           </CardContent>
         </Card>
 
@@ -609,7 +735,18 @@ export default function ProfilePage() {
           </CardContent>
         </Card>
       </main>
+
+      {/* Verification Modal */}
+      <VerificationModal
+        isOpen={verificationModalOpen}
+        onClose={() => setVerificationModalOpen(false)}
+        tipo={verificationType}
+        nuevoValor={verificationValue}
+        onConfirm={handleConfirmCode}
+        onResend={handleResendCode}
+        isLoading={confirmVerificationMutation.isPending}
+        error={verificationError}
+      />
     </div>
   );
 }
-
