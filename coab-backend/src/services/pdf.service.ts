@@ -242,8 +242,9 @@ export async function generateBoletaPDF(boletaId: bigint): Promise<Buffer | null
  * Get storage path for a boleta PDF
  */
 function getStoragePath(boleta: { periodoDesde: Date; clienteId: bigint; numeroFolio: string }): string {
-  const year = boleta.periodoDesde.getFullYear();
-  const month = format(boleta.periodoDesde, 'MM');
+  // Use UTC methods to avoid timezone issues (dates come as midnight UTC)
+  const year = boleta.periodoDesde.getUTCFullYear();
+  const month = String(boleta.periodoDesde.getUTCMonth() + 1).padStart(2, '0');
   return `${year}/${month}/${boleta.clienteId}_${boleta.numeroFolio}.pdf`;
 }
 
@@ -368,13 +369,14 @@ export async function regeneratePDF(boletaId: bigint): Promise<{
 export async function startBatchGeneration(
   periodo: string,
   regenerar: boolean,
-  adminEmail: string
+  adminEmail: string,
+  generarZip: boolean = false
 ): Promise<{ jobId: string }> {
   const [yearStr, monthStr] = periodo.split('-');
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10);
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0);
+  const startDate = new Date(Date.UTC(year, month - 1, 1));
+  const endDate = new Date(Date.UTC(year, month, 0));
 
   // Count boletas for this period
   const totalCount = await prisma.boletas.count({
@@ -391,7 +393,7 @@ export async function startBatchGeneration(
   const jobId = await jobService.createJob(periodo, regenerar, adminEmail, totalCount);
 
   // Start processing in background (don't await)
-  processBatchJob(jobId, year, month, regenerar).catch(error => {
+  processBatchJob(jobId, year, month, regenerar, generarZip).catch(error => {
     console.error(`Batch job ${jobId} failed:`, error);
     jobService.failJob(jobId, error.message);
   });
@@ -406,12 +408,14 @@ async function processBatchJob(
   jobId: string,
   year: number,
   month: number,
-  regenerate: boolean
+  regenerate: boolean,
+  generateZip: boolean = false
 ): Promise<void> {
   await jobService.startJob(jobId);
 
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0);
+  // Use UTC dates to avoid timezone issues
+  const startDate = new Date(Date.UTC(year, month - 1, 1));
+  const endDate = new Date(Date.UTC(year, month, 0));
 
   // Build where clause - skip boletas with existing PDFs unless regenerating
   const whereClause: any = {
@@ -487,9 +491,9 @@ async function processBatchJob(
     return;
   }
 
-  // Generate ZIP file with all PDFs
+  // Generate ZIP file with all PDFs (only if requested)
   let zipPath: string | null = null;
-  if (exitosos > 0) {
+  if (generateZip && exitosos > 0) {
     try {
       zipPath = await generateBatchZip(year, month, generatedPaths);
     } catch (error: any) {
@@ -679,5 +683,59 @@ export async function pdfExists(boletaId: bigint): Promise<boolean> {
   );
 
   return (data?.length || 0) > 0;
+}
+
+/**
+ * Get statistics for a period (boleta counts, PDF counts)
+ */
+export async function getPeriodStats(periodo: string): Promise<{
+  total: number;
+  conPdf: number;
+  sinPdf: number;
+  periodo: string;
+  periodoLabel: string;
+}> {
+  const [yearStr, monthStr] = periodo.split('-');
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const startDate = new Date(Date.UTC(year, month - 1, 1));
+  const endDate = new Date(Date.UTC(year, month, 0));
+
+  const [total, conPdf] = await Promise.all([
+    prisma.boletas.count({
+      where: {
+        periodo_desde: {
+          gte: startDate,
+          lte: endDate,
+        },
+        cliente_id: { not: null },
+      },
+    }),
+    prisma.boletas.count({
+      where: {
+        periodo_desde: {
+          gte: startDate,
+          lte: endDate,
+        },
+        cliente_id: { not: null },
+        pdf_path: { not: null },
+      },
+    }),
+  ]);
+
+  // Format month name in Spanish
+  const monthNames = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+  ];
+  const periodoLabel = `${monthNames[month - 1]} ${year}`;
+
+  return {
+    total,
+    conPdf,
+    sinPdf: total - conPdf,
+    periodo,
+    periodoLabel,
+  };
 }
 

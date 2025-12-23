@@ -19,6 +19,7 @@ import {
   Clock,
   AlertCircle,
   StopCircle,
+  Archive,
 } from 'lucide-react';
 import {
   Select,
@@ -47,6 +48,14 @@ interface JobStatus {
   tiempoEstimado: number | null;
 }
 
+interface PeriodStats {
+  total: number;
+  conPdf: number;
+  sinPdf: number;
+  periodo: string;
+  periodoLabel: string;
+}
+
 interface StartJobResponse {
   success: boolean;
   jobId: string;
@@ -66,7 +75,7 @@ export default function BatchPDFPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
-  // Generate last 12 months as options
+  // Generate last 12 months as options (excluding current month if it's early in the month)
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
     const date = subMonths(new Date(), i);
     return {
@@ -75,8 +84,9 @@ export default function BatchPDFPage() {
     };
   });
   
-  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0].value);
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[1].value); // Default to last month
   const [regenerate, setRegenerate] = useState(false);
+  const [generateZip, setGenerateZip] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
 
@@ -87,6 +97,16 @@ export default function BatchPDFPage() {
       navigate('/admin/login');
     }
   }, [navigate]);
+
+  // Fetch period stats when month changes
+  const { data: periodStats, isLoading: isLoadingStats } = useQuery({
+    queryKey: ['period-stats', selectedMonth],
+    queryFn: async () => {
+      const res = await adminApiClient.get(`/admin/boletas/periodo-stats?periodo=${selectedMonth}`);
+      return res.data as PeriodStats;
+    },
+    enabled: !currentJobId, // Don't fetch while job is running
+  });
 
   // Poll for job status
   const { data: jobStatus, isLoading: isLoadingJob } = useQuery({
@@ -110,6 +130,8 @@ export default function BatchPDFPage() {
           title: 'Generación completada',
           description: `Se generaron ${jobStatus.exitosos} PDFs exitosamente`,
         });
+        // Refresh stats
+        queryClient.invalidateQueries({ queryKey: ['period-stats'] });
       } else if (jobStatus.estado === 'error') {
         toast({
           variant: 'destructive',
@@ -123,7 +145,7 @@ export default function BatchPDFPage() {
         });
       }
     }
-  }, [jobStatus, toast]);
+  }, [jobStatus, toast, queryClient]);
 
   // Start generation mutation
   const startMutation = useMutation({
@@ -131,6 +153,7 @@ export default function BatchPDFPage() {
       const res = await adminApiClient.post('/admin/boletas/generar-pdfs', {
         periodo: selectedMonth,
         regenerar: regenerate,
+        generarZip: generateZip,
       });
       return res.data as StartJobResponse;
     },
@@ -191,6 +214,7 @@ export default function BatchPDFPage() {
   const handleStartNew = () => {
     setCurrentJobId(null);
     setIsPolling(false);
+    queryClient.invalidateQueries({ queryKey: ['period-stats'] });
   };
 
   const isActive = startMutation.isPending || (jobStatus?.estado === 'pendiente') || (jobStatus?.estado === 'procesando');
@@ -199,6 +223,11 @@ export default function BatchPDFPage() {
   const isCancelled = jobStatus?.estado === 'cancelado';
   const hasJob = !!currentJobId;
   const jobFinished = isComplete || hasError || isCancelled;
+
+  // Determine if we can generate
+  const canGenerate = periodStats && periodStats.total > 0 && (regenerate || periodStats.sinPdf > 0);
+  const noBoletas = periodStats && periodStats.total === 0;
+  const allGenerated = periodStats && periodStats.total > 0 && periodStats.sinPdf === 0 && !regenerate;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -259,26 +288,99 @@ export default function BatchPDFPage() {
               </Select>
             </div>
 
-            {/* Regenerate Toggle */}
-            <div className="flex items-center gap-3">
-              <Switch
-                id="regenerate"
-                checked={regenerate}
-                onCheckedChange={setRegenerate}
-                disabled={hasJob && !jobFinished}
-              />
-              <div>
-                <label
-                  htmlFor="regenerate"
-                  className={`text-sm font-medium cursor-pointer ${
-                    hasJob && !jobFinished ? 'text-slate-400' : 'text-slate-700'
-                  }`}
-                >
-                  Regenerar existentes
-                </label>
-                <p className="text-xs text-slate-500">
-                  Sobrescribe PDFs que ya existen
-                </p>
+            {/* Period Stats */}
+            {!hasJob && (
+              <div className="p-4 bg-slate-50 rounded-lg space-y-2">
+                {isLoadingStats ? (
+                  <div className="flex items-center gap-2 text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Cargando información del período...</span>
+                  </div>
+                ) : noBoletas ? (
+                  <div className="flex items-center gap-2 text-amber-700">
+                    <AlertCircle className="h-5 w-5" />
+                    <span className="font-medium">
+                      No hay boletas para este período
+                    </span>
+                  </div>
+                ) : periodStats ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div>
+                        <p className="text-2xl font-bold text-slate-900">{periodStats.total}</p>
+                        <p className="text-xs text-slate-500">Total boletas</p>
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-emerald-600">{periodStats.conPdf}</p>
+                        <p className="text-xs text-emerald-600">Con PDF</p>
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-blue-600">{periodStats.sinPdf}</p>
+                        <p className="text-xs text-blue-600">Sin PDF</p>
+                      </div>
+                    </div>
+                    {allGenerated && (
+                      <div className="flex items-center gap-2 text-emerald-700 mt-2">
+                        <CheckCircle className="h-4 w-4" />
+                        <span className="text-sm">
+                          Todos los PDFs ya están generados
+                        </span>
+                      </div>
+                    )}
+                  </>
+                ) : null}
+              </div>
+            )}
+
+            {/* Options */}
+            <div className="space-y-4">
+              {/* Regenerate Toggle */}
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="regenerate"
+                  checked={regenerate}
+                  onCheckedChange={setRegenerate}
+                  disabled={hasJob && !jobFinished}
+                />
+                <div>
+                  <label
+                    htmlFor="regenerate"
+                    className={`text-sm font-medium cursor-pointer ${
+                      hasJob && !jobFinished ? 'text-slate-400' : 'text-slate-700'
+                    }`}
+                  >
+                    Regenerar existentes
+                  </label>
+                  <p className="text-xs text-slate-500">
+                    Sobrescribe PDFs que ya existen
+                  </p>
+                </div>
+              </div>
+
+              {/* Generate ZIP Toggle */}
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="generateZip"
+                  checked={generateZip}
+                  onCheckedChange={setGenerateZip}
+                  disabled={hasJob && !jobFinished}
+                />
+                <div>
+                  <label
+                    htmlFor="generateZip"
+                    className={`text-sm font-medium cursor-pointer ${
+                      hasJob && !jobFinished ? 'text-slate-400' : 'text-slate-700'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1">
+                      <Archive className="h-4 w-4" />
+                      Generar archivo ZIP
+                    </span>
+                  </label>
+                  <p className="text-xs text-slate-500">
+                    Crea un archivo ZIP para descargar (toma más tiempo)
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -286,7 +388,7 @@ export default function BatchPDFPage() {
             {!hasJob && (
               <Button
                 onClick={() => startMutation.mutate()}
-                disabled={startMutation.isPending}
+                disabled={startMutation.isPending || !canGenerate}
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 {startMutation.isPending ? (
@@ -297,7 +399,9 @@ export default function BatchPDFPage() {
                 ) : (
                   <>
                     <RefreshCw className="h-4 w-4 mr-2" />
-                    Generar PDFs
+                    {regenerate 
+                      ? `Regenerar ${periodStats?.total || 0} PDFs`
+                      : `Generar ${periodStats?.sinPdf || 0} PDFs`}
                   </>
                 )}
               </Button>
@@ -486,10 +590,10 @@ export default function BatchPDFPage() {
             <h3 className="font-medium text-blue-900 mb-2">Información</h3>
             <ul className="text-sm text-blue-800 space-y-1">
               <li>• Los PDFs se generan en paralelo para mayor velocidad</li>
-              <li>• El archivo ZIP estará disponible al finalizar</li>
-              <li>• Puede cancelar el trabajo en cualquier momento</li>
-              <li>• "Existentes" son boletas que ya tienen PDF generado</li>
-              <li>• Active "Regenerar existentes" para sobrescribir todos los PDFs</li>
+              <li>• Los clientes pueden descargar sus boletas desde el portal</li>
+              <li>• Para generar PDFs individuales, use el perfil del cliente</li>
+              <li>• Active "Generar archivo ZIP" si necesita descargar todos los PDFs</li>
+              <li>• La generación de ZIP toma más tiempo (descarga cada archivo)</li>
             </ul>
           </CardContent>
         </Card>

@@ -12,6 +12,7 @@ import { z } from 'zod';
 const batchPDFSchema = z.object({
   periodo: z.string().regex(/^\d{4}-\d{2}$/, 'Periodo debe tener formato YYYY-MM'),
   regenerar: z.boolean().optional().default(false),
+  generarZip: z.boolean().optional().default(false), // ZIP generation is optional (slow)
 });
 
 // Schema for boleta ID param
@@ -272,6 +273,31 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * GET /admin/boletas/periodo-stats
+   * Get boleta counts for a specific period
+   */
+  fastify.get('/boletas/periodo-stats', async (request, reply) => {
+    try {
+      const query = z.object({
+        periodo: z.string().regex(/^\d{4}-\d{2}$/, 'Periodo debe tener formato YYYY-MM'),
+      }).parse(request.query);
+
+      const stats = await pdfService.getPeriodStats(query.periodo);
+      return stats;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener estadísticas del período');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener estadísticas' },
+      });
+    }
+  });
+
+  /**
    * POST /admin/boletas/generar-pdfs
    * Start async batch PDF generation job with progress tracking
    * Returns job ID immediately, processing happens in background
@@ -281,7 +307,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const data = batchPDFSchema.parse(request.body);
 
       fastify.log.info(
-        { periodo: data.periodo, regenerar: data.regenerar, adminEmail: request.user!.email },
+        { periodo: data.periodo, regenerar: data.regenerar, generarZip: data.generarZip, adminEmail: request.user!.email },
         'Iniciando trabajo de generación masiva de PDFs'
       );
 
@@ -289,7 +315,8 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const { jobId } = await pdfService.startBatchGeneration(
         data.periodo,
         data.regenerar,
-        request.user!.email!
+        request.user!.email!,
+        data.generarZip
       );
 
       fastify.log.info(
