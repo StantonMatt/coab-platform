@@ -1,8 +1,14 @@
 import { FastifyPluginAsync } from 'fastify';
 import { ZodError, z } from 'zod';
-import { paginationSchema, boletaIdSchema } from '../schemas/customer.schema.js';
+import {
+  paginationSchema,
+  boletaIdSchema,
+  updateProfileSchema,
+  cambiarContrasenaSchema,
+} from '../schemas/customer.schema.js';
 import * as customerService from '../services/customer.service.js';
 import * as autopagoService from '../services/autopago.service.js';
+import * as authService from '../services/auth.service.js';
 import { requireCliente } from '../middleware/auth.middleware.js';
 
 // Schema for activar autopago
@@ -57,6 +63,80 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.log.error(error, 'Error al obtener perfil');
         return reply.code(500).send({
           error: { code: 'INTERNAL_ERROR', message: 'Error interno' },
+        });
+      }
+    });
+
+    /**
+     * PUT /clientes/me
+     * Update current customer's profile (email and/or phone)
+     */
+    protectedRoutes.put('/me', async (request, reply) => {
+      try {
+        const clienteId = request.user!.userId as bigint;
+        const data = updateProfileSchema.parse(request.body);
+
+        const result = await customerService.updateCustomerProfile(clienteId, data);
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: error.errors[0].message,
+            },
+          });
+        }
+        if (error.message === 'Debe proporcionar al menos un campo para actualizar') {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar perfil');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar perfil' },
+        });
+      }
+    });
+
+    /**
+     * POST /clientes/me/cambiar-contrasena
+     * Change customer password (requires current password)
+     */
+    protectedRoutes.post('/me/cambiar-contrasena', async (request, reply) => {
+      try {
+        const clienteId = request.user!.userId as bigint;
+        const data = cambiarContrasenaSchema.parse(request.body);
+
+        const result = await authService.cambiarContrasena(
+          clienteId,
+          data.contrasenaActual,
+          data.nuevaContrasena
+        );
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: error.errors[0].message,
+            },
+          });
+        }
+        // Handle AuthError from auth service
+        if (error.code === 'INVALID_PASSWORD') {
+          return reply.code(400).send({
+            error: { code: 'INVALID_PASSWORD', message: error.message },
+          });
+        }
+        if (error.code === 'ACCOUNT_NOT_SETUP') {
+          return reply.code(400).send({
+            error: { code: 'ACCOUNT_NOT_SETUP', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al cambiar contraseña');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al cambiar contraseña' },
         });
       }
     });

@@ -252,9 +252,18 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
-          <Button variant="outline" onClick={handleLogout} className="h-11">
-            Cerrar Sesión
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => navigate('/perfil')}
+              className="h-11"
+            >
+              Mi Perfil
+            </Button>
+            <Button variant="outline" onClick={handleLogout} className="h-11">
+              Cerrar Sesión
+            </Button>
+          </div>
         </div>
       </header>
 

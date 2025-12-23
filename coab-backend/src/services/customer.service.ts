@@ -287,3 +287,42 @@ export async function getActiveNotifications() {
     hasta: n.hasta,
   }));
 }
+
+/**
+ * Update customer profile (email and/or phone)
+ * Only updates fields that are provided and non-empty
+ */
+export async function updateCustomerProfile(
+  clienteId: bigint,
+  data: { correo?: string; telefono?: string }
+) {
+  const updateData: { correo?: string; telefono?: string } = {};
+
+  // Only update if provided and non-empty
+  if (data.correo !== undefined && data.correo !== '') {
+    updateData.correo = data.correo.toLowerCase().trim();
+  }
+  if (data.telefono !== undefined && data.telefono !== '') {
+    updateData.telefono = data.telefono.trim();
+  }
+
+  // Ensure at least one field to update
+  if (Object.keys(updateData).length === 0) {
+    throw new Error('Debe proporcionar al menos un campo para actualizar');
+  }
+
+  const cliente = await prisma.clientes.update({
+    where: { id: clienteId },
+    data: updateData,
+    select: {
+      correo: true,
+      telefono: true,
+    },
+  });
+
+  return {
+    email: cliente.correo,
+    telefono: cliente.telefono,
+    message: 'Perfil actualizado exitosamente',
+  };
+}

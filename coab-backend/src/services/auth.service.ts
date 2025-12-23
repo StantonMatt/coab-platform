@@ -865,3 +865,48 @@ export async function validarCodigoReset(
   };
 }
 
+/**
+ * Change customer password (authenticated)
+ * Requires verification of current password before allowing change
+ */
+export async function cambiarContrasena(
+  clienteId: bigint,
+  contrasenaActual: string,
+  nuevaContrasena: string
+) {
+  const cliente = await prisma.clientes.findUnique({
+    where: { id: clienteId },
+    select: { hash_contrasena: true },
+  });
+
+  if (!cliente || !cliente.hash_contrasena) {
+    throw new AuthError('Cuenta no configurada', 'ACCOUNT_NOT_SETUP', 400);
+  }
+
+  // Verify current password
+  let passwordValid = false;
+  try {
+    passwordValid = await verify(cliente.hash_contrasena, contrasenaActual);
+  } catch {
+    passwordValid = false;
+  }
+
+  if (!passwordValid) {
+    throw new AuthError('Contraseña actual incorrecta', 'INVALID_PASSWORD', 400);
+  }
+
+  // Hash new password with Argon2id
+  const hashContrasena = await hash(nuevaContrasena, {
+    memoryCost: 65536, // 64 MB
+    timeCost: 3,
+    parallelism: 4,
+  });
+
+  await prisma.clientes.update({
+    where: { id: clienteId },
+    data: { hash_contrasena: hashContrasena },
+  });
+
+  return { success: true, message: 'Contraseña actualizada exitosamente' };
+}
+

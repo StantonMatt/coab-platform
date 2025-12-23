@@ -11,6 +11,7 @@ import SetupPage from './pages/Setup';
 import RecuperarPage from './pages/Recuperar';
 import PaymentResultPage from './pages/PaymentResult';
 import TransbankCallbackPage from './pages/TransbankCallback';
+import ProfilePage from './pages/Profile';
 import AdminLoginPage from './pages/admin/Login';
 import AdminDashboardPage from './pages/admin/Dashboard';
 import AdminCustomersPage from './pages/admin/Customers';
@@ -48,6 +49,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/setup/:token" element={<SetupPage />} />
           <Route path="/pago/resultado" element={<PaymentResultPage />} />
           <Route path="/transbank/callback" element={<TransbankCallbackPage />} />
+          <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/" element={<Navigate to="/login" replace />} />
           
           {/* Admin Portal */}
