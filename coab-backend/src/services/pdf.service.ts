@@ -1,17 +1,25 @@
 /**
  * PDF Generation Service
  * Generates boleta PDFs using React-PDF and stores them in Supabase Storage
+ * Supports parallel processing and batch operations with progress tracking
  */
 
 import React from 'react';
-import ReactPDF from '@react-pdf/renderer';
+import { renderToBuffer } from '@react-pdf/renderer';
 import QRCode from 'qrcode';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import pLimit from 'p-limit';
+import archiver from 'archiver';
+import { Readable, PassThrough } from 'stream';
 import prisma from '../lib/prisma.js';
 import { env } from '../config/env.js';
 import { BoletaTemplate } from '../pdf/BoletaTemplate.js';
 import { BoletaData, ClienteData } from '../pdf/types.js';
 import { format } from 'date-fns';
+import * as jobService from './job.service.js';
+
+// Concurrency limit for parallel PDF generation
+const CONCURRENCY_LIMIT = 10;
 
 const STORAGE_BUCKET = 'boletas';
 
@@ -225,7 +233,7 @@ export async function generateBoletaPDF(boletaId: bigint): Promise<Buffer | null
   });
 
   // Render to buffer
-  const pdfBuffer = await ReactPDF.renderToBuffer(element);
+  const pdfBuffer = await renderToBuffer(element);
   
   return Buffer.from(pdfBuffer);
 }
@@ -354,7 +362,224 @@ export async function regeneratePDF(boletaId: bigint): Promise<{
 }
 
 /**
- * Batch generate PDFs for a period
+ * Start an async batch PDF generation job
+ * Returns the job ID immediately and processes in background
+ */
+export async function startBatchGeneration(
+  periodo: string,
+  regenerar: boolean,
+  adminEmail: string
+): Promise<{ jobId: string }> {
+  const [yearStr, monthStr] = periodo.split('-');
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 0);
+
+  // Count boletas for this period
+  const totalCount = await prisma.boletas.count({
+    where: {
+      periodo_desde: {
+        gte: startDate,
+        lte: endDate,
+      },
+      cliente_id: { not: null },
+    },
+  });
+
+  // Create job
+  const jobId = await jobService.createJob(periodo, regenerar, adminEmail, totalCount);
+
+  // Start processing in background (don't await)
+  processBatchJob(jobId, year, month, regenerar).catch(error => {
+    console.error(`Batch job ${jobId} failed:`, error);
+    jobService.failJob(jobId, error.message);
+  });
+
+  return { jobId };
+}
+
+/**
+ * Process batch PDF generation job in background
+ */
+async function processBatchJob(
+  jobId: string,
+  year: number,
+  month: number,
+  regenerate: boolean
+): Promise<void> {
+  await jobService.startJob(jobId);
+
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 0);
+
+  // Build where clause - skip boletas with existing PDFs unless regenerating
+  const whereClause: any = {
+    periodo_desde: {
+      gte: startDate,
+      lte: endDate,
+    },
+    cliente_id: { not: null },
+  };
+
+  if (!regenerate) {
+    whereClause.pdf_path = null;
+  }
+
+  const boletas = await prisma.boletas.findMany({
+    where: whereClause,
+    select: { id: true, numero_folio: true, cliente_id: true, periodo_desde: true },
+  });
+
+  const totalCount = await prisma.boletas.count({
+    where: {
+      periodo_desde: {
+        gte: startDate,
+        lte: endDate,
+      },
+      cliente_id: { not: null },
+    },
+  });
+
+  const omitidos = totalCount - boletas.length;
+  let procesados = 0;
+  let exitosos = 0;
+  let fallidos = 0;
+  const errores: string[] = [];
+  const generatedPaths: { path: string; boletaId: bigint; folio: string }[] = [];
+
+  // Use p-limit for parallel processing
+  const limit = pLimit(CONCURRENCY_LIMIT);
+
+  const promises = boletas.map(boleta =>
+    limit(async () => {
+      // Check if job was cancelled
+      if (await jobService.isJobCancelled(jobId)) {
+        return;
+      }
+
+      const result = await generateAndStorePDF(boleta.id);
+      procesados++;
+
+      if (result.success && result.path) {
+        exitosos++;
+        generatedPaths.push({
+          path: result.path,
+          boletaId: boleta.id,
+          folio: boleta.numero_folio || `B-${boleta.id}`,
+        });
+      } else {
+        fallidos++;
+        errores.push(`Boleta ${boleta.numero_folio || boleta.id}: ${result.error}`);
+      }
+
+      // Update progress every 5 PDFs or on last one
+      if (procesados % 5 === 0 || procesados === boletas.length) {
+        await jobService.updateProgress(jobId, procesados, exitosos, fallidos, omitidos, errores);
+      }
+    })
+  );
+
+  await Promise.all(promises);
+
+  // Check if cancelled
+  if (await jobService.isJobCancelled(jobId)) {
+    return;
+  }
+
+  // Generate ZIP file with all PDFs
+  let zipPath: string | null = null;
+  if (exitosos > 0) {
+    try {
+      zipPath = await generateBatchZip(year, month, generatedPaths);
+    } catch (error: any) {
+      console.error('Error generating ZIP:', error);
+      errores.push(`Error al generar ZIP: ${error.message}`);
+    }
+  }
+
+  // Update final progress
+  await jobService.updateProgress(jobId, procesados, exitosos, fallidos, omitidos, errores);
+  await jobService.completeJob(jobId, zipPath);
+}
+
+/**
+ * Generate ZIP file containing all PDFs for a batch
+ */
+async function generateBatchZip(
+  year: number,
+  month: number,
+  pdfPaths: { path: string; boletaId: bigint; folio: string }[]
+): Promise<string> {
+  const monthStr = String(month).padStart(2, '0');
+  const zipFileName = `boletas_${year}-${monthStr}.zip`;
+  const zipPath = `exports/${year}/${monthStr}/${zipFileName}`;
+
+  // Create archive
+  const archive = archiver('zip', { zlib: { level: 5 } });
+  const chunks: Buffer[] = [];
+
+  // Collect chunks
+  archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+  // Download each PDF and add to archive
+  for (const pdf of pdfPaths) {
+    try {
+      const { data, error } = await getSupabase().storage
+        .from(STORAGE_BUCKET)
+        .download(pdf.path);
+
+      if (!error && data) {
+        const buffer = Buffer.from(await data.arrayBuffer());
+        archive.append(buffer, { name: `${pdf.folio}.pdf` });
+      }
+    } catch (error) {
+      console.error(`Error adding PDF ${pdf.path} to ZIP:`, error);
+    }
+  }
+
+  // Finalize archive
+  await archive.finalize();
+
+  // Combine all chunks
+  const zipBuffer = Buffer.concat(chunks);
+
+  // Upload ZIP to Supabase Storage
+  const { error: uploadError } = await getSupabase().storage
+    .from(STORAGE_BUCKET)
+    .upload(zipPath, zipBuffer, {
+      contentType: 'application/zip',
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw new Error(`Error uploading ZIP: ${uploadError.message}`);
+  }
+
+  return zipPath;
+}
+
+/**
+ * Get signed URL for downloading a ZIP file
+ */
+export async function getZipDownloadUrl(zipPath: string): Promise<{
+  url?: string;
+  error?: string;
+}> {
+  const { data, error } = await getSupabase().storage
+    .from(STORAGE_BUCKET)
+    .createSignedUrl(zipPath, 3600); // 1 hour expiry
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  return { url: data.signedUrl };
+}
+
+/**
+ * Batch generate PDFs for a period (synchronous - for backwards compatibility)
+ * Use startBatchGeneration for async processing with progress tracking
  */
 export async function batchGeneratePDFs(
   year: number,
@@ -364,13 +589,30 @@ export async function batchGeneratePDFs(
   total: number;
   generated: number;
   failed: number;
+  skipped: number;
   errors: string[];
 }> {
-  // Find all boletas for this period
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0);
 
+  const whereClause: any = {
+    periodo_desde: {
+      gte: startDate,
+      lte: endDate,
+    },
+    cliente_id: { not: null },
+  };
+
+  if (!regenerate) {
+    whereClause.pdf_path = null;
+  }
+
   const boletas = await prisma.boletas.findMany({
+    where: whereClause,
+    select: { id: true },
+  });
+
+  const totalCount = await prisma.boletas.count({
     where: {
       periodo_desde: {
         gte: startDate,
@@ -378,25 +620,32 @@ export async function batchGeneratePDFs(
       },
       cliente_id: { not: null },
     },
-    select: { id: true },
   });
 
   const result = {
-    total: boletas.length,
+    total: totalCount,
     generated: 0,
     failed: 0,
+    skipped: totalCount - boletas.length,
     errors: [] as string[],
   };
 
-  for (const boleta of boletas) {
-    const genResult = await generateAndStorePDF(boleta.id);
-    if (genResult.success) {
-      result.generated++;
-    } else {
-      result.failed++;
-      result.errors.push(`Boleta ${boleta.id}: ${genResult.error}`);
-    }
-  }
+  // Use p-limit for parallel processing
+  const limit = pLimit(CONCURRENCY_LIMIT);
+
+  const promises = boletas.map(boleta =>
+    limit(async () => {
+      const genResult = await generateAndStorePDF(boleta.id);
+      if (genResult.success) {
+        result.generated++;
+      } else {
+        result.failed++;
+        result.errors.push(`Boleta ${boleta.id}: ${genResult.error}`);
+      }
+    })
+  );
+
+  await Promise.all(promises);
 
   return result;
 }

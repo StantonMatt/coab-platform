@@ -4,6 +4,7 @@ import * as adminService from '../services/admin.service.js';
 import * as twilioService from '../services/twilio.service.js';
 import * as autopagoService from '../services/autopago.service.js';
 import * as pdfService from '../services/pdf.service.js';
+import * as jobService from '../services/job.service.js';
 import { requireAdmin } from '../middleware/auth.middleware.js';
 import { z } from 'zod';
 
@@ -16,6 +17,11 @@ const batchPDFSchema = z.object({
 // Schema for boleta ID param
 const boletaIdParamSchema = z.object({
   id: z.string().regex(/^\d+$/, 'ID de boleta inválido'),
+});
+
+// Schema for job ID param
+const jobIdParamSchema = z.object({
+  id: z.string().uuid('ID de trabajo inválido'),
 });
 import { env } from '../config/env.js';
 import {
@@ -267,32 +273,35 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   /**
    * POST /admin/boletas/generar-pdfs
-   * Batch generate PDFs for a specific period
+   * Start async batch PDF generation job with progress tracking
+   * Returns job ID immediately, processing happens in background
    */
   fastify.post('/boletas/generar-pdfs', async (request, reply) => {
     try {
       const data = batchPDFSchema.parse(request.body);
-      const [yearStr, monthStr] = data.periodo.split('-');
-      const year = parseInt(yearStr, 10);
-      const month = parseInt(monthStr, 10);
 
       fastify.log.info(
         { periodo: data.periodo, regenerar: data.regenerar, adminEmail: request.user!.email },
-        'Iniciando generación masiva de PDFs'
+        'Iniciando trabajo de generación masiva de PDFs'
       );
 
-      const result = await pdfService.batchGeneratePDFs(year, month, data.regenerar);
+      // Start async job and return job ID immediately
+      const { jobId } = await pdfService.startBatchGeneration(
+        data.periodo,
+        data.regenerar,
+        request.user!.email!
+      );
 
       fastify.log.info(
-        { ...result, periodo: data.periodo },
-        'Generación masiva de PDFs completada'
+        { jobId, periodo: data.periodo },
+        'Trabajo de generación de PDFs creado'
       );
 
       return {
         success: true,
+        jobId,
         periodo: data.periodo,
-        ...result,
-        mensaje: `Generados: ${result.generated}/${result.total}, Fallidos: ${result.failed}`,
+        mensaje: 'Trabajo de generación iniciado. Use GET /admin/jobs/:id para consultar progreso.',
       };
     } catch (error: any) {
       if (error instanceof ZodError) {
@@ -300,9 +309,137 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
           error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
         });
       }
-      fastify.log.error(error, 'Error en generación masiva de PDFs');
+      fastify.log.error(error, 'Error iniciando generación masiva de PDFs');
       return reply.code(500).send({
-        error: { code: 'BATCH_GENERATION_FAILED', message: 'Error al generar PDFs' },
+        error: { code: 'BATCH_GENERATION_FAILED', message: 'Error al iniciar generación de PDFs' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/jobs/:id
+   * Get job status and progress
+   */
+  fastify.get('/jobs/:id', async (request, reply) => {
+    try {
+      const params = jobIdParamSchema.parse(request.params);
+      const job = await jobService.getJob(params.id);
+
+      if (!job) {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: 'Trabajo no encontrado' },
+        });
+      }
+
+      return job;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener estado del trabajo');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener estado del trabajo' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/jobs/:id/download
+   * Get signed URL for ZIP download
+   */
+  fastify.get('/jobs/:id/download', async (request, reply) => {
+    try {
+      const params = jobIdParamSchema.parse(request.params);
+      const job = await jobService.getJob(params.id);
+
+      if (!job) {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: 'Trabajo no encontrado' },
+        });
+      }
+
+      if (job.estado !== 'completado') {
+        return reply.code(400).send({
+          error: { code: 'JOB_NOT_COMPLETE', message: 'El trabajo aún no ha terminado' },
+        });
+      }
+
+      if (!job.zipPath) {
+        return reply.code(404).send({
+          error: { code: 'NO_ZIP', message: 'No hay archivo ZIP disponible para este trabajo' },
+        });
+      }
+
+      const result = await pdfService.getZipDownloadUrl(job.zipPath);
+
+      if (result.error || !result.url) {
+        return reply.code(500).send({
+          error: { code: 'DOWNLOAD_ERROR', message: result.error || 'Error al obtener enlace de descarga' },
+        });
+      }
+
+      return { url: result.url, filename: `boletas_${job.periodo}.zip` };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener enlace de descarga');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener enlace de descarga' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/jobs/:id/cancel
+   * Cancel a running job
+   */
+  fastify.post('/jobs/:id/cancel', async (request, reply) => {
+    try {
+      const params = jobIdParamSchema.parse(request.params);
+      const cancelled = await jobService.cancelJob(params.id);
+
+      if (!cancelled) {
+        return reply.code(400).send({
+          error: { code: 'CANCEL_FAILED', message: 'No se pudo cancelar el trabajo. Puede que ya haya terminado.' },
+        });
+      }
+
+      fastify.log.info(
+        { jobId: params.id, adminEmail: request.user!.email },
+        'Trabajo de generación de PDFs cancelado'
+      );
+
+      return { success: true, mensaje: 'Trabajo cancelado' };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al cancelar trabajo');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al cancelar trabajo' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/jobs
+   * Get recent jobs for current admin
+   */
+  fastify.get('/jobs', async (request, reply) => {
+    try {
+      const jobs = await jobService.getRecentJobs(request.user!.email!, 10);
+      return { jobs };
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener trabajos recientes');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener trabajos' },
       });
     }
   });

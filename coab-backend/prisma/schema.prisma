@@ -639,3 +639,24 @@ model verificacion_contacto {
   @@index([cliente_id, tipo], map: "idx_verificacion_cliente_tipo")
   @@index([expira_en], map: "idx_verificacion_expira")
 }
+
+/// Batch PDF generation jobs for progress tracking
+model trabajos_pdf {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  periodo       String    @db.VarChar(7) // "2025-11"
+  estado        String    @default("pendiente") @db.VarChar(20) // pendiente, procesando, completado, error, cancelado
+  total         Int       @default(0)
+  procesados    Int       @default(0)
+  exitosos      Int       @default(0)
+  fallidos      Int       @default(0)
+  omitidos      Int       @default(0)
+  regenerar     Boolean   @default(false)
+  zip_path      String?   @db.VarChar(255) // Path in Supabase Storage
+  errores       Json      @default("[]")
+  iniciado_en   DateTime  @default(now()) @db.Timestamptz(6)
+  completado_en DateTime? @db.Timestamptz(6)
+  admin_email   String?   @db.VarChar(255)
+
+  @@index([estado], map: "idx_trabajos_pdf_estado")
+  @@index([iniciado_en], map: "idx_trabajos_pdf_fecha")
+}
