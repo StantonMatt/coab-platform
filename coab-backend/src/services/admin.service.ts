@@ -94,26 +94,16 @@ export async function searchCustomers(
   const data = hasNextPage ? customers.slice(0, -1) : customers;
   const nextCursor = hasNextPage ? data[data.length - 1].id.toString() : null;
 
-  // Batch query: Get all saldos in a single query (avoids N+1)
-  const customerIds = data.map((c) => c.id);
-  const saldosGrouped = await prisma.boletas.groupBy({
-    by: ['cliente_id'],
-    where: {
-      cliente_id: { in: customerIds },
-      estado: 'pendiente',
-    },
-    _sum: {
-      monto_total: true,
-    },
-  });
+  // Get balances using centralized billing service (parallel for performance)
+  const balances = await Promise.all(
+    data.map((c) => getCurrentBalance(c.id))
+  );
 
   // Create a map for quick lookup
   const saldoMap = new Map<bigint, number>();
-  for (const row of saldosGrouped) {
-    if (row.cliente_id !== null) {
-      saldoMap.set(row.cliente_id, Number(row._sum.monto_total || 0));
-    }
-  }
+  data.forEach((customer, index) => {
+    saldoMap.set(customer.id, balances[index]);
+  });
 
   // Transform data with saldos from the map
   const customersWithSaldo = data.map((customer) => {
