@@ -308,6 +308,7 @@ export async function getCustomerBoletas(
       monto_total_mes: true, // Individual month's charges
       estado: true,
       consumo_m3: true,
+      pdf_path: true, // For checking if PDF exists
     },
   });
 
@@ -338,6 +339,7 @@ export async function getCustomerBoletas(
             : 0,
         parcialmentePagada: partialInfo?.parcialmentePagada ?? false,
         consumoM3: b.consumo_m3 ? Number(b.consumo_m3) : null,
+        tienePdf: !!b.pdf_path, // Indicates if PDF was generated
       };
     }),
     pagination: { hasNextPage, nextCursor },
@@ -731,5 +733,136 @@ export async function generateSetupToken(
       tieneContrasena: !!cliente.hash_contrasena,
     },
     expiresAt: tokenRecord.expira_en,
+  };
+}
+
+/**
+ * Get all payments with filters, search, and pagination
+ */
+export async function getAllPayments(options: {
+  page: number;
+  limit: number;
+  fechaDesde?: Date;
+  fechaHasta?: Date;
+  tipoPago?: string;
+  estado?: string;
+  search?: string;
+}) {
+  const { page, limit, fechaDesde, fechaHasta, tipoPago, estado, search } = options;
+  const skip = (page - 1) * limit;
+
+  // Build where clause
+  const where: Prisma.pagosWhereInput = {};
+
+  // Date range filter
+  if (fechaDesde || fechaHasta) {
+    where.fecha_pago = {};
+    if (fechaDesde) {
+      where.fecha_pago.gte = fechaDesde;
+    }
+    if (fechaHasta) {
+      where.fecha_pago.lte = fechaHasta;
+    }
+  }
+
+  // Payment type filter
+  if (tipoPago) {
+    where.tipo_pago = tipoPago;
+  }
+
+  // Status filter
+  if (estado) {
+    where.estado = estado;
+  }
+
+  // Search filter (customer name, RUT, or transaction number)
+  if (search) {
+    const cleanSearch = search.replace(/[.\-]/g, '').toUpperCase();
+    where.OR = [
+      { numero_transaccion: { contains: search, mode: 'insensitive' } },
+      { nombre_cliente: { contains: search, mode: 'insensitive' } },
+      { rut_cliente: { contains: cleanSearch, mode: 'insensitive' } },
+      {
+        cliente: {
+          OR: [
+            { primer_nombre: { contains: search, mode: 'insensitive' } },
+            { primer_apellido: { contains: search, mode: 'insensitive' } },
+            { rut: { contains: cleanSearch, mode: 'insensitive' } },
+            { numero_cliente: { contains: search, mode: 'insensitive' } },
+          ],
+        },
+      },
+    ];
+  }
+
+  // Execute queries in parallel
+  const [pagos, total, aggregate] = await Promise.all([
+    // Get paginated payments
+    prisma.pagos.findMany({
+      where,
+      include: {
+        cliente: {
+          select: {
+            id: true,
+            primer_nombre: true,
+            segundo_nombre: true,
+            primer_apellido: true,
+            segundo_apellido: true,
+            rut: true,
+            numero_cliente: true,
+          },
+        },
+      },
+      orderBy: { fecha_pago: 'desc' },
+      skip,
+      take: limit,
+    }),
+    // Get total count
+    prisma.pagos.count({ where }),
+    // Get sum of amounts for the filtered results
+    prisma.pagos.aggregate({
+      where,
+      _sum: { monto: true },
+      _count: true,
+    }),
+  ]);
+
+  // Transform results
+  const transformedPagos = pagos.map((pago) => ({
+    id: pago.id.toString(),
+    monto: Number(pago.monto),
+    fechaPago: pago.fecha_pago.toISOString().split('T')[0],
+    tipoPago: pago.tipo_pago,
+    estado: pago.estado,
+    numeroTransaccion: pago.numero_transaccion,
+    observaciones: pago.observaciones,
+    operador: pago.operador,
+    cliente: pago.cliente
+      ? {
+          id: pago.cliente.id.toString(),
+          nombre: buildFullName(
+            pago.cliente.primer_nombre,
+            pago.cliente.segundo_nombre,
+            pago.cliente.primer_apellido,
+            pago.cliente.segundo_apellido
+          ),
+          rut: pago.cliente.rut || '',
+          numeroCliente: pago.cliente.numero_cliente,
+        }
+      : null,
+  }));
+
+  return {
+    pagos: transformedPagos,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+    resumen: {
+      totalMonto: Number(aggregate._sum.monto || 0),
+      cantidadPagos: aggregate._count,
+    },
   };
 }

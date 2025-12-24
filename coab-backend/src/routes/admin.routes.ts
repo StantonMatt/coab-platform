@@ -727,6 +727,55 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   /**
+   * GET /admin/pagos
+   * List all payments with filters, search, and pagination
+   */
+  fastify.get('/pagos', async (request, reply) => {
+    try {
+      const querySchema = z.object({
+        page: z.coerce.number().int().min(1).default(1),
+        limit: z.coerce.number().int().min(1).max(100).default(20),
+        fechaDesde: z.string().optional(),
+        fechaHasta: z.string().optional(),
+        tipoPago: z.string().optional(),
+        estado: z.string().optional(),
+        q: z.string().optional(),
+      });
+
+      const query = querySchema.parse(request.query);
+
+      const result = await adminService.getAllPayments({
+        page: query.page,
+        limit: query.limit,
+        fechaDesde: query.fechaDesde ? new Date(query.fechaDesde) : undefined,
+        fechaHasta: query.fechaHasta ? new Date(query.fechaHasta) : undefined,
+        tipoPago: query.tipoPago,
+        estado: query.estado,
+        search: query.q,
+      });
+
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Parámetros de consulta inválidos',
+            details: error.errors,
+          },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener pagos');
+      return reply.code(500).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Error al obtener pagos',
+        },
+      });
+    }
+  });
+
+  /**
    * POST /admin/pagos
    * Register a manual payment with FIFO boleta application
    */

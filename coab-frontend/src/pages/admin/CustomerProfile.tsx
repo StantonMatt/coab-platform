@@ -21,9 +21,8 @@ import {
   Calendar,
   AlertTriangle,
   Send,
-  Download,
   Loader2,
-  RefreshCw,
+  FileText,
 } from 'lucide-react';
 import PaymentModal from '@/components/admin/PaymentModal';
 
@@ -69,6 +68,7 @@ interface Boleta {
   estado: string;
   parcialmentePagada?: boolean;
   consumoM3: number | null;
+  tienePdf: boolean;
 }
 
 interface PaginatedResponse<T> {
@@ -85,45 +85,26 @@ export default function CustomerProfilePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
-  const [regeneratingPdfId, setRegeneratingPdfId] = useState<string | null>(null);
 
-  // Download PDF function
+  // Download PDF function - opens PDF in new tab
   const handleDownloadPdf = async (boletaId: string) => {
-    setDownloadingPdfId(boletaId);
     try {
       const res = await adminApiClient.get(`/admin/boletas/${boletaId}/pdf`);
       if (res.data?.url) {
         window.open(res.data.url, '_blank');
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'PDF no disponible',
+          description: 'Este boleta aún no tiene un PDF generado',
+        });
       }
     } catch (error: any) {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: error.response?.data?.error?.message || 'Error al descargar PDF',
+        description: error.response?.data?.error?.message || 'Error al abrir PDF',
       });
-    } finally {
-      setDownloadingPdfId(null);
-    }
-  };
-
-  // Regenerate PDF function
-  const handleRegeneratePdf = async (boletaId: string) => {
-    setRegeneratingPdfId(boletaId);
-    try {
-      await adminApiClient.post(`/admin/boletas/${boletaId}/regenerar-pdf`);
-      toast({
-        title: 'PDF regenerado',
-        description: 'El PDF ha sido regenerado correctamente',
-      });
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.response?.data?.error?.message || 'Error al regenerar PDF',
-      });
-    } finally {
-      setRegeneratingPdfId(null);
     }
   };
 
@@ -277,7 +258,7 @@ export default function CustomerProfilePage() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => navigate('/admin/clientes')}
+              onClick={() => navigate(-1)}
               className="text-slate-600 hover:text-slate-900 hover:bg-slate-100"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -527,20 +508,37 @@ export default function CustomerProfilePage() {
                         <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
                           Estado
                         </th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
-                          PDF
-                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {boletasData.data.map((boleta: Boleta) => (
-                        <tr key={boleta.id} className="hover:bg-slate-50">
+                        <tr
+                          key={boleta.id}
+                          className={`hover:bg-slate-50 ${
+                            boleta.tienePdf
+                              ? 'cursor-pointer hover:bg-blue-50'
+                              : ''
+                          }`}
+                          onClick={() => {
+                            if (boleta.tienePdf) {
+                              handleDownloadPdf(boleta.id);
+                            }
+                          }}
+                          title={boleta.tienePdf ? 'Click para ver PDF' : 'PDF no disponible'}
+                        >
                           <td className="px-4 py-3 text-slate-900">
-                            {format(
-                              new Date(boleta.fechaEmision),
-                              'MMMM yyyy',
-                              { locale: es }
-                            )}
+                            <div className="flex items-center gap-2">
+                              {boleta.tienePdf && (
+                                <FileText className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                              )}
+                              <span>
+                                {format(
+                                  new Date(boleta.fechaEmision),
+                                  'MMMM yyyy',
+                                  { locale: es }
+                                )}
+                              </span>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-slate-600">
                             {format(
@@ -581,38 +579,6 @@ export default function CustomerProfilePage() {
                                 ? 'Pendiente'
                                 : 'Pagada'}
                             </span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0"
-                                onClick={() => handleDownloadPdf(boleta.id)}
-                                disabled={downloadingPdfId === boleta.id}
-                                title="Descargar PDF"
-                              >
-                                {downloadingPdfId === boleta.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Download className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0"
-                                onClick={() => handleRegeneratePdf(boleta.id)}
-                                disabled={regeneratingPdfId === boleta.id}
-                                title="Regenerar PDF"
-                              >
-                                {regeneratingPdfId === boleta.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="h-4 w-4" />
-                                )}
-                              </Button>
-                            </div>
                           </td>
                         </tr>
                       ))}

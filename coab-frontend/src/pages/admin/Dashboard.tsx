@@ -116,33 +116,35 @@ export default function AdminDashboardPage() {
             </Card>
           </Link>
 
-          {/* Pagos - Disabled (Iteration 6) */}
-          <Card className="opacity-50 cursor-not-allowed">
-            <CardHeader className="pb-2">
-              <div className="w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6 text-slate-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-                  />
-                </svg>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <CardTitle className="text-lg text-slate-400">Pagos</CardTitle>
-              <p className="text-sm text-slate-400 mt-1">
-                Iteración 6
-              </p>
-            </CardContent>
-          </Card>
+          {/* Pagos - Active */}
+          <Link to="/admin/pagos">
+            <Card className="hover:shadow-md transition-shadow cursor-pointer border-2 border-transparent hover:border-green-200">
+              <CardHeader className="pb-2">
+                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-6 w-6 text-green-600"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+                    />
+                  </svg>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <CardTitle className="text-lg text-slate-800">Pagos</CardTitle>
+                <p className="text-sm text-slate-600 mt-1">
+                  Historial de pagos
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
 
           {/* Generar PDFs - Active */}
           <Link to="/admin/boletas/generar">
