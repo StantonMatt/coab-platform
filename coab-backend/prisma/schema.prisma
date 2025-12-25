@@ -47,6 +47,7 @@ model clientes {
   tokens_configuracion       token_configuracion[]
   transacciones_online       transacciones_online[]
   verificaciones_contacto    verificacion_contacto[]
+  solicitudes_repactacion    solicitudes_repactacion[]
 
   @@index([primer_apellido, segundo_apellido], map: "idx_clientes_apellidos")
   @@index([numero_cliente, es_cliente_actual], map: "idx_clientes_numero_actual")
@@ -302,8 +303,9 @@ model repactaciones {
   observaciones       String?
   fecha_creacion      DateTime  @default(now()) @db.Timestamptz(6)
   fecha_actualizacion DateTime  @default(now()) @db.Timestamptz(6)
-  boletas             boletas[]
-  cliente             clientes? @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  boletas                 boletas[]
+  cliente                 clientes?                 @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  solicitudes_repactacion solicitudes_repactacion[]
 
   @@index([cliente_id], map: "idx_repactaciones_cliente")
   @@index([estado], map: "idx_repactaciones_estado")
@@ -659,4 +661,28 @@ model trabajos_pdf {
 
   @@index([estado], map: "idx_trabajos_pdf_estado")
   @@index([iniciado_en], map: "idx_trabajos_pdf_fecha")
+}
+
+/// Customer-initiated repactacion (payment restructuring) requests
+/// Workflow: customer creates request -> supervisor/admin approves -> creates repactacion
+model solicitudes_repactacion {
+  id                   BigInt         @id @default(autoincrement())
+  cliente_id           BigInt
+  numero_cliente       String         @db.VarChar(20)
+  monto_deuda_estimado Decimal        @db.Decimal(12, 2)
+  cuotas_solicitadas   Int
+  motivo               String?
+  estado               String         @default("pendiente") @db.VarChar(30) // pendiente, aprobada, rechazada, cancelada
+  revisado_por         String?        @db.VarChar(100)
+  fecha_revision       DateTime?      @db.Timestamptz(6)
+  motivo_rechazo       String?
+  repactacion_id       BigInt?        // Link to created repactacion when approved
+  creado_en            DateTime       @default(now()) @db.Timestamptz(6)
+  actualizado_en       DateTime       @default(now()) @db.Timestamptz(6)
+  cliente              clientes       @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+  repactacion          repactaciones? @relation(fields: [repactacion_id], references: [id])
+
+  @@index([cliente_id], map: "idx_solicitudes_repactacion_cliente")
+  @@index([estado], map: "idx_solicitudes_repactacion_estado")
+  @@index([creado_en], map: "idx_solicitudes_repactacion_fecha")
 }

@@ -18,6 +18,15 @@ import AdminCustomersPage from './pages/admin/Customers';
 import AdminCustomerProfilePage from './pages/admin/CustomerProfile';
 import AdminBatchPDFPage from './pages/admin/BatchPDF';
 import AdminPaymentsPage from './pages/admin/Payments';
+import AdminRutasPage from './pages/admin/Rutas';
+import AdminTarifasPage from './pages/admin/Tarifas';
+import AdminSubsidiosPage from './pages/admin/Subsidios';
+import AdminMedidoresPage from './pages/admin/Medidores';
+import AdminLecturasPage from './pages/admin/Lecturas';
+import AdminMultasPage from './pages/admin/Multas';
+import AdminDescuentosPage from './pages/admin/Descuentos';
+import AdminCortesPage from './pages/admin/Cortes';
+import AdminRepactacionesPage from './pages/admin/Repactaciones';
 import './index.css';
 
 // Initialize Mercado Pago SDK (public key will be fetched from backend)
@@ -61,6 +70,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/admin/clientes/:id" element={<AdminCustomerProfilePage />} />
           <Route path="/admin/pagos" element={<AdminPaymentsPage />} />
           <Route path="/admin/boletas/generar" element={<AdminBatchPDFPage />} />
+          <Route path="/admin/rutas" element={<AdminRutasPage />} />
+          <Route path="/admin/tarifas" element={<AdminTarifasPage />} />
+          <Route path="/admin/subsidios" element={<AdminSubsidiosPage />} />
+          <Route path="/admin/medidores" element={<AdminMedidoresPage />} />
+          <Route path="/admin/lecturas" element={<AdminLecturasPage />} />
+          <Route path="/admin/multas" element={<AdminMultasPage />} />
+          <Route path="/admin/descuentos" element={<AdminDescuentosPage />} />
+          <Route path="/admin/cortes" element={<AdminCortesPage />} />
+          <Route path="/admin/repactaciones" element={<AdminRepactacionesPage />} />
           <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
         </Routes>
         <Toaster />

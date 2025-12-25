@@ -326,3 +326,116 @@ export async function updateCustomerProfile(
     message: 'Perfil actualizado exitosamente',
   };
 }
+
+/**
+ * Customer requests a repactacion
+ */
+export async function solicitarRepactacion(
+  clienteId: bigint,
+  cuotasSolicitadas: number,
+  motivo?: string
+) {
+  // Check for existing pending request
+  const existing = await prisma.solicitudes_repactacion.findFirst({
+    where: {
+      cliente_id: clienteId,
+      estado: 'pendiente',
+    },
+  });
+
+  if (existing) {
+    throw new Error('Ya tiene una solicitud de repactación pendiente');
+  }
+
+  // Get customer and calculate debt
+  const cliente = await prisma.clientes.findUnique({
+    where: { id: clienteId },
+    include: {
+      boletas: {
+        where: { estado: { in: ['pendiente', 'parcial'] } },
+      },
+    },
+  });
+
+  if (!cliente) {
+    throw new Error('Cliente no encontrado');
+  }
+
+  // Calculate total debt from pending boletas
+  const montoDeuda = cliente.boletas.reduce(
+    (sum, b) => sum + (Number(b.monto_total) - Number(b.monto_pagado || 0)),
+    0
+  );
+
+  if (montoDeuda <= 0) {
+    throw new Error('No tiene deuda pendiente para repactar');
+  }
+
+  // Create the request
+  const solicitud = await prisma.solicitudes_repactacion.create({
+    data: {
+      cliente_id: clienteId,
+      numero_cliente: cliente.numero_cliente,
+      monto_deuda_estimado: montoDeuda,
+      cuotas_solicitadas: cuotasSolicitadas,
+      motivo: motivo || null,
+    },
+  });
+
+  // Audit log
+  await prisma.log_auditoria.create({
+    data: {
+      accion: 'SOLICITAR_REPACTACION',
+      entidad: 'solicitudes_repactacion',
+      entidad_id: solicitud.id,
+      usuario_tipo: 'cliente',
+      usuario_email: cliente.correo || cliente.numero_cliente,
+      datos_nuevos: {
+        montoDeuda,
+        cuotasSolicitadas,
+        motivo,
+      },
+    },
+  });
+
+  return {
+    success: true,
+    message: 'Solicitud de repactación enviada. Será revisada por nuestro equipo.',
+    solicitudId: solicitud.id.toString(),
+    montoDeudaEstimado: montoDeuda,
+    cuotasSolicitadas,
+  };
+}
+
+/**
+ * Get customer's repactacion requests
+ */
+export async function getSolicitudesRepactacion(clienteId: bigint) {
+  const solicitudes = await prisma.solicitudes_repactacion.findMany({
+    where: { cliente_id: clienteId },
+    orderBy: { creado_en: 'desc' },
+    include: {
+      repactacion: {
+        select: { id: true, estado: true, total_cuotas: true },
+      },
+    },
+  });
+
+  return solicitudes.map((s) => ({
+    id: s.id.toString(),
+    montoDeudaEstimado: Number(s.monto_deuda_estimado),
+    cuotasSolicitadas: s.cuotas_solicitadas,
+    motivo: s.motivo,
+    estado: s.estado,
+    fechaRevision: s.fecha_revision,
+    motivoRechazo: s.motivo_rechazo,
+    creadoEn: s.creado_en,
+    repactacion: s.repactacion
+      ? {
+          id: s.repactacion.id.toString(),
+          estado: s.repactacion.estado,
+          totalCuotas: s.repactacion.total_cuotas,
+        }
+      : null,
+  }));
+}

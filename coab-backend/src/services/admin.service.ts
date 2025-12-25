@@ -26,92 +26,80 @@ function buildFullName(
 /**
  * Search customers by RUT, name parts, numero_cliente, or address
  * Uses case-insensitive matching
+ * If query is empty/undefined, returns all current customers with pagination
  */
 export async function searchCustomers(
-  query: string,
-  limit: number = 50,
+  query: string | undefined,
+  page: number = 1,
+  limit: number = 20,
   cursor?: string
 ) {
-  // Sanitize query (remove special regex chars)
-  const sanitizedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const skip = (page - 1) * limit;
 
-  // Build search conditions for name parts
-  const searchConditions = [
-    { rut: { contains: sanitizedQuery, mode: 'insensitive' as const } },
-    {
-      numero_cliente: { contains: sanitizedQuery, mode: 'insensitive' as const },
-    },
-    {
-      primer_nombre: { contains: sanitizedQuery, mode: 'insensitive' as const },
-    },
-    {
-      segundo_nombre: { contains: sanitizedQuery, mode: 'insensitive' as const },
-    },
-    {
-      primer_apellido: { contains: sanitizedQuery, mode: 'insensitive' as const },
-    },
-    {
-      segundo_apellido: {
-        contains: sanitizedQuery,
-        mode: 'insensitive' as const,
-      },
-    },
-  ];
+  // Build where clause
+  const whereClause: any = {
+    es_cliente_actual: true,
+  };
 
-  const customers = await prisma.clientes.findMany({
-    where: {
-      es_cliente_actual: true,
-      OR: searchConditions,
-    },
-    take: limit + 1,
-    skip: cursor ? 1 : 0,
-    cursor: cursor ? { id: BigInt(cursor) } : undefined,
-    orderBy: { primer_apellido: 'asc' },
-    select: {
-      id: true,
-      rut: true,
-      numero_cliente: true,
-      primer_nombre: true,
-      segundo_nombre: true,
-      primer_apellido: true,
-      segundo_apellido: true,
-      correo: true,
-      telefono: true,
-      estado_cuenta: true,
-      bloqueado_hasta: true,
-      direcciones: {
-        take: 1,
-        select: {
-          direccion_calle: true,
-          direccion_numero: true,
-          poblacion: true,
+  // If query is provided, add search conditions
+  if (query && query.trim().length >= 2) {
+    const sanitizedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    whereClause.OR = [
+      { rut: { contains: sanitizedQuery, mode: 'insensitive' as const } },
+      { numero_cliente: { contains: sanitizedQuery, mode: 'insensitive' as const } },
+      { primer_nombre: { contains: sanitizedQuery, mode: 'insensitive' as const } },
+      { segundo_nombre: { contains: sanitizedQuery, mode: 'insensitive' as const } },
+      { primer_apellido: { contains: sanitizedQuery, mode: 'insensitive' as const } },
+      { segundo_apellido: { contains: sanitizedQuery, mode: 'insensitive' as const } },
+    ];
+  }
+
+  // Get total count and customers in parallel
+  const [total, customers] = await Promise.all([
+    prisma.clientes.count({ where: whereClause }),
+    prisma.clientes.findMany({
+      where: whereClause,
+      take: limit,
+      skip,
+      orderBy: { primer_apellido: 'asc' },
+      select: {
+        id: true,
+        rut: true,
+        numero_cliente: true,
+        primer_nombre: true,
+        segundo_nombre: true,
+        primer_apellido: true,
+        segundo_apellido: true,
+        correo: true,
+        telefono: true,
+        estado_cuenta: true,
+        bloqueado_hasta: true,
+        direcciones: {
+          take: 1,
+          select: {
+            direccion_calle: true,
+            direccion_numero: true,
+            poblacion: true,
+          },
         },
       },
-    },
-  });
+    }),
+  ]);
 
-  const hasNextPage = customers.length > limit;
-  const data = hasNextPage ? customers.slice(0, -1) : customers;
-  const nextCursor = hasNextPage ? data[data.length - 1].id.toString() : null;
+  const totalPages = Math.ceil(total / limit);
+  const hasNextPage = page < totalPages;
 
-  // Get balances using centralized billing service (parallel for performance)
-  const balances = await Promise.all(
-    data.map((c) => getCurrentBalance(c.id))
-  );
-
-  // Create a map for quick lookup
-  const saldoMap = new Map<bigint, number>();
-  data.forEach((customer, index) => {
-    saldoMap.set(customer.id, balances[index]);
-  });
-
-  // Transform data with saldos from the map
-  const customersWithSaldo = data.map((customer) => {
-    const saldo = saldoMap.get(customer.id) || 0;
+  // For list view, use estado_cuenta to determine status instead of expensive balance queries
+  // Exact balance is calculated when viewing individual customer profile
+  const customersWithSaldo = customers.map((customer) => {
     const direccion = customer.direcciones[0];
     const direccionStr = direccion
       ? `${direccion.direccion_calle} ${direccion.direccion_numero || ''}, ${direccion.poblacion}`.trim()
       : null;
+
+    // Use estado_cuenta from DB to determine if customer has debt
+    // saldo of 1 means "has debt" (moroso), 0 means "al dia"
+    const tieneSaldo = customer.estado_cuenta === 'MOROSO';
 
     return {
       id: customer.id.toString(),
@@ -126,8 +114,10 @@ export async function searchCustomers(
       direccion: direccionStr,
       telefono: customer.telefono,
       email: customer.correo,
-      saldo,
-      estadoCuenta: saldo > 0 ? 'MOROSO' : 'AL_DIA',
+      // For list view, we just indicate if they have debt (not the exact amount)
+      // The actual saldo is shown on the customer profile page
+      saldo: tieneSaldo ? 1 : 0,
+      estadoCuenta: tieneSaldo ? 'MOROSO' : 'AL_DIA',
       estaBloqueado:
         customer.bloqueado_hasta !== null &&
         customer.bloqueado_hasta > new Date(),
@@ -137,9 +127,12 @@ export async function searchCustomers(
   return {
     data: customersWithSaldo,
     pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
       hasNextPage,
-      nextCursor,
-      total: customersWithSaldo.length,
+      nextCursor: hasNextPage ? customers[customers.length - 1]?.id.toString() : null,
     },
   };
 }

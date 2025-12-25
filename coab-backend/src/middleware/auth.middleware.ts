@@ -1,6 +1,12 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { jwtVerify } from 'jose';
 import { env } from '../config/env.js';
+import { 
+  hasPermission, 
+  type PermissionEntity, 
+  type PermissionAction,
+  type AdminRole 
+} from '../config/permissions.js';
 
 /**
  * Extend FastifyRequest to include user data from JWT
@@ -170,6 +176,36 @@ export function requireRole(minRole: 'billing_clerk' | 'supervisor' | 'admin') {
         error: {
           code: 'INSUFFICIENT_PERMISSIONS',
           message: `Se requiere rol ${minRole} o superior`,
+        },
+      });
+    }
+  };
+}
+
+/**
+ * Middleware factory to require a specific permission on an entity
+ * Uses the centralized permissions config for easy modification
+ * 
+ * Usage: requirePermission('repactaciones', 'create')
+ * 
+ * @param entity - The entity being accessed (e.g., 'clientes', 'repactaciones')
+ * @param action - The action being performed (e.g., 'view', 'create', 'edit')
+ */
+export function requirePermission(entity: PermissionEntity, action: PermissionAction) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    // First check admin auth
+    await requireAdmin(request, reply);
+
+    // If reply was already sent (auth failed), return
+    if (reply.sent) return;
+
+    const userRole = (request.user?.rol || 'billing_clerk') as AdminRole;
+
+    if (!hasPermission(userRole, entity, action)) {
+      return reply.code(403).send({
+        error: {
+          code: 'FORBIDDEN',
+          message: `Permiso insuficiente para ${action} en ${entity}`,
         },
       });
     }

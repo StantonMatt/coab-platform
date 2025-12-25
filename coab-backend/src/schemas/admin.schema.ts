@@ -2,14 +2,12 @@ import { z } from 'zod';
 
 /**
  * Search schema for customer search
- * Requires minimum 2 characters
+ * Query is optional - if empty, returns all customers paginated
  */
 export const searchSchema = z.object({
-  q: z
-    .string()
-    .min(2, 'Búsqueda debe tener al menos 2 caracteres')
-    .max(100, 'Búsqueda muy larga'),
-  limit: z.coerce.number().min(1).max(100).default(50),
+  q: z.string().max(100, 'Búsqueda muy larga').optional(),
+  page: z.coerce.number().min(1).default(1),
+  limit: z.coerce.number().min(1).max(100).default(20),
   cursor: z.string().optional(),
 });
 

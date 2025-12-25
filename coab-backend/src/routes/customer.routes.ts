@@ -544,6 +544,65 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
     });
+
+    /**
+     * POST /clientes/me/solicitar-repactacion
+     * Customer requests a repactacion (payment restructuring)
+     */
+    protectedRoutes.post('/me/solicitar-repactacion', async (request, reply) => {
+      try {
+        const clienteId = request.user!.userId as bigint;
+        const data = z.object({
+          cuotasSolicitadas: z.number().int().min(2).max(24),
+          motivo: z.string().max(500).optional(),
+        }).parse(request.body);
+
+        const result = await customerService.solicitarRepactacion(
+          clienteId,
+          data.cuotasSolicitadas,
+          data.motivo
+        );
+
+        fastify.log.info(
+          { clienteId: clienteId.toString(), solicitudId: result.solicitudId },
+          'Solicitud de repactación creada'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message?.includes('pendiente')) {
+          return reply.code(409).send({
+            error: { code: 'CONFLICT', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al solicitar repactación');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al solicitar repactación' },
+        });
+      }
+    });
+
+    /**
+     * GET /clientes/me/solicitudes-repactacion
+     * Get customer's repactacion requests
+     */
+    protectedRoutes.get('/me/solicitudes-repactacion', async (request, reply) => {
+      try {
+        const clienteId = request.user!.userId as bigint;
+        const solicitudes = await customerService.getSolicitudesRepactacion(clienteId);
+        return { solicitudes };
+      } catch (error) {
+        fastify.log.error(error, 'Error al obtener solicitudes de repactación');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al obtener solicitudes' },
+        });
+      }
+    });
   });
 };
 

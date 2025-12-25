@@ -23,8 +23,15 @@ import {
   Send,
   Loader2,
   FileText,
+  Gauge,
+  FileSearch,
+  Tag,
+  Scissors,
+  RefreshCw,
+  Pencil,
 } from 'lucide-react';
 import PaymentModal from '@/components/admin/PaymentModal';
+import { ClienteEditModal, PermissionGate, StatusBadge } from '@/components/admin';
 
 interface Customer {
   id: string;
@@ -79,12 +86,69 @@ interface PaginatedResponse<T> {
   };
 }
 
+interface Medidor {
+  id: number;
+  numero_medidor: string;
+  marca: string | null;
+  modelo: string | null;
+  estado: string;
+  fecha_instalacion: string | null;
+}
+
+interface Lectura {
+  id: number;
+  medidor_id: number;
+  lectura_anterior: number;
+  lectura_actual: number;
+  consumo_m3: number;
+  fecha_lectura: string;
+  observaciones: string | null;
+}
+
+interface Multa {
+  id: number;
+  monto: number;
+  tipo: string;
+  descripcion: string | null;
+  estado: string;
+  fecha_multa: string;
+}
+
+interface Descuento {
+  id: number;
+  nombre: string;
+  tipo: string;
+  valor: number;
+  fecha_aplicacion: string;
+  monto_aplicado: number | null;
+}
+
+interface CorteServicio {
+  id: number;
+  fecha_corte: string;
+  motivo: string;
+  estado: string;
+  fecha_reposicion: string | null;
+}
+
+interface Repactacion {
+  id: number;
+  monto_original: number;
+  monto_total: number;
+  cuotas_total: number;
+  cuotas_pagadas: number;
+  monto_cuota: number;
+  estado: string;
+  fecha_inicio: string;
+}
+
 export default function CustomerProfilePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   // Download PDF function - opens PDF in new tab
   const handleDownloadPdf = async (boletaId: string) => {
@@ -149,6 +213,66 @@ export default function CustomerProfilePage() {
       const res = await adminApiClient.get<PaginatedResponse<Boleta>>(
         `/admin/clientes/${id}/boletas?limit=20`
       );
+      return res.data;
+    },
+    enabled: !!id,
+  });
+
+  // Fetch medidores
+  const { data: medidoresData } = useQuery<{ medidores: Medidor[] }>({
+    queryKey: ['admin-customer-medidores', id],
+    queryFn: async () => {
+      const res = await adminApiClient.get(`/admin/clientes/${id}/medidores`);
+      return res.data;
+    },
+    enabled: !!id,
+  });
+
+  // Fetch lecturas
+  const { data: lecturasData } = useQuery<{ lecturas: Lectura[] }>({
+    queryKey: ['admin-customer-lecturas', id],
+    queryFn: async () => {
+      const res = await adminApiClient.get(`/admin/clientes/${id}/lecturas?limit=20`);
+      return res.data;
+    },
+    enabled: !!id,
+  });
+
+  // Fetch multas
+  const { data: multasData } = useQuery<{ multas: Multa[] }>({
+    queryKey: ['admin-customer-multas', id],
+    queryFn: async () => {
+      const res = await adminApiClient.get(`/admin/clientes/${id}/multas`);
+      return res.data;
+    },
+    enabled: !!id,
+  });
+
+  // Fetch descuentos aplicados
+  const { data: descuentosData } = useQuery<{ descuentos: Descuento[] }>({
+    queryKey: ['admin-customer-descuentos', id],
+    queryFn: async () => {
+      const res = await adminApiClient.get(`/admin/clientes/${id}/descuentos`);
+      return res.data;
+    },
+    enabled: !!id,
+  });
+
+  // Fetch cortes
+  const { data: cortesData } = useQuery<{ cortes: CorteServicio[] }>({
+    queryKey: ['admin-customer-cortes', id],
+    queryFn: async () => {
+      const res = await adminApiClient.get(`/admin/clientes/${id}/cortes`);
+      return res.data;
+    },
+    enabled: !!id,
+  });
+
+  // Fetch repactaciones
+  const { data: repactacionesData } = useQuery<{ repactaciones: Repactacion[] }>({
+    queryKey: ['admin-customer-repactaciones', id],
+    queryFn: async () => {
+      const res = await adminApiClient.get(`/admin/clientes/${id}/repactaciones`);
       return res.data;
     },
     enabled: !!id,
@@ -417,6 +541,16 @@ export default function CustomerProfilePage() {
                   Registrar Pago
                 </Button>
 
+                <PermissionGate entity="clientes" action="update">
+                  <Button
+                    variant="outline"
+                    onClick={() => setEditModalOpen(true)}
+                  >
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Editar Cliente
+                  </Button>
+                </PermissionGate>
+
                 {!customer.tieneContrasena && (
                   <Button
                     variant="outline"
@@ -479,6 +613,34 @@ export default function CustomerProfilePage() {
               className="data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
             >
               Más Info
+            </TabsTrigger>
+            <TabsTrigger
+              value="medidores"
+              className="data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            >
+              <Gauge className="h-4 w-4 mr-1" />
+              Medidores
+            </TabsTrigger>
+            <TabsTrigger
+              value="lecturas"
+              className="data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            >
+              <FileSearch className="h-4 w-4 mr-1" />
+              Lecturas
+            </TabsTrigger>
+            <TabsTrigger
+              value="multas"
+              className="data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            >
+              <AlertTriangle className="h-4 w-4 mr-1" />
+              Multas
+            </TabsTrigger>
+            <TabsTrigger
+              value="repactaciones"
+              className="data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            >
+              <RefreshCw className="h-4 w-4 mr-1" />
+              Repactaciones
             </TabsTrigger>
           </TabsList>
 
@@ -683,6 +845,250 @@ export default function CustomerProfilePage() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* Medidores Tab */}
+          <TabsContent value="medidores" className="mt-4">
+            <Card className="border-slate-200 shadow-sm overflow-hidden">
+              {!medidoresData?.medidores?.length ? (
+                <div className="p-8 text-center text-slate-500">
+                  No hay medidores registrados
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          N° Medidor
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Marca / Modelo
+                        </th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
+                          Estado
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Instalación
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {medidoresData.medidores.map((medidor: Medidor) => (
+                        <tr key={medidor.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 font-mono text-slate-900">
+                            {medidor.numero_medidor}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {medidor.marca || '-'} {medidor.modelo ? `/ ${medidor.modelo}` : ''}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                              medidor.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' :
+                              medidor.estado === 'inactivo' ? 'bg-slate-100 text-slate-600' :
+                              'bg-amber-100 text-amber-700'
+                            }`}>
+                              {medidor.estado}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {medidor.fecha_instalacion 
+                              ? format(new Date(medidor.fecha_instalacion), 'dd/MM/yyyy')
+                              : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </TabsContent>
+
+          {/* Lecturas Tab */}
+          <TabsContent value="lecturas" className="mt-4">
+            <Card className="border-slate-200 shadow-sm overflow-hidden">
+              {!lecturasData?.lecturas?.length ? (
+                <div className="p-8 text-center text-slate-500">
+                  No hay lecturas registradas
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Fecha
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
+                          Anterior
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
+                          Actual
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
+                          Consumo
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Observaciones
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {lecturasData.lecturas.map((lectura: Lectura) => (
+                        <tr key={lectura.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 text-slate-900">
+                            {format(new Date(lectura.fecha_lectura), 'dd/MM/yyyy')}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-600">
+                            {lectura.lectura_anterior}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-600">
+                            {lectura.lectura_actual}
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-900">
+                            {lectura.consumo_m3} m³
+                          </td>
+                          <td className="px-4 py-3 text-slate-500 text-sm">
+                            {lectura.observaciones || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </TabsContent>
+
+          {/* Multas Tab */}
+          <TabsContent value="multas" className="mt-4">
+            <Card className="border-slate-200 shadow-sm overflow-hidden">
+              {!multasData?.multas?.length ? (
+                <div className="p-8 text-center text-slate-500">
+                  No hay multas registradas
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Fecha
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Tipo
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
+                          Monto
+                        </th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
+                          Estado
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Descripción
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {multasData.multas.map((multa: Multa) => (
+                        <tr key={multa.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 text-slate-900">
+                            {format(new Date(multa.fecha_multa), 'dd/MM/yyyy')}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600 capitalize">
+                            {multa.tipo}
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-red-600">
+                            {formatearPesos(multa.monto)}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                              multa.estado === 'activa' ? 'bg-red-100 text-red-700' :
+                              multa.estado === 'pagada' ? 'bg-emerald-100 text-emerald-700' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {multa.estado}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-500 text-sm">
+                            {multa.descripcion || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </TabsContent>
+
+          {/* Repactaciones Tab */}
+          <TabsContent value="repactaciones" className="mt-4">
+            <Card className="border-slate-200 shadow-sm overflow-hidden">
+              {!repactacionesData?.repactaciones?.length ? (
+                <div className="p-8 text-center text-slate-500">
+                  No hay repactaciones registradas
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Fecha Inicio
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
+                          Monto Original
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
+                          Monto Total
+                        </th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
+                          Cuotas
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
+                          Cuota Mensual
+                        </th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
+                          Estado
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {repactacionesData.repactaciones.map((repactacion: Repactacion) => (
+                        <tr key={repactacion.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 text-slate-900">
+                            {format(new Date(repactacion.fecha_inicio), 'dd/MM/yyyy')}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-600">
+                            {formatearPesos(repactacion.monto_original)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-900">
+                            {formatearPesos(repactacion.monto_total)}
+                          </td>
+                          <td className="px-4 py-3 text-center text-slate-600">
+                            {repactacion.cuotas_pagadas}/{repactacion.cuotas_total}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-600">
+                            {formatearPesos(repactacion.monto_cuota)}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                              repactacion.estado === 'activa' ? 'bg-blue-100 text-blue-700' :
+                              repactacion.estado === 'completada' ? 'bg-emerald-100 text-emerald-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {repactacion.estado}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </TabsContent>
         </Tabs>
       </main>
 
@@ -695,6 +1101,23 @@ export default function CustomerProfilePage() {
         clienteRut={customer.rut || ''}
         clienteDireccion={customer.direccion || undefined}
         saldoActual={customer.saldo}
+      />
+
+      {/* Edit Modal */}
+      <ClienteEditModal
+        open={editModalOpen}
+        onClose={() => setEditModalOpen(false)}
+        clienteId={id!}
+        clienteData={{
+          nombre: customer.nombre,
+          email: customer.email || '',
+          telefono: customer.telefono || '',
+          direccion: customer.direccion || '',
+        }}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['admin-customer', id] });
+          setEditModalOpen(false);
+        }}
       />
     </div>
   );

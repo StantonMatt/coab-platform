@@ -5,7 +5,17 @@ import * as twilioService from '../services/twilio.service.js';
 import * as autopagoService from '../services/autopago.service.js';
 import * as pdfService from '../services/pdf.service.js';
 import * as jobService from '../services/job.service.js';
-import { requireAdmin } from '../middleware/auth.middleware.js';
+import * as rutasService from '../services/rutas.service.js';
+import * as tarifasService from '../services/tarifas.service.js';
+import * as subsidiosService from '../services/subsidios.service.js';
+import * as clientesService from '../services/clientes.service.js';
+import * as medidoresService from '../services/medidores.service.js';
+import * as lecturasService from '../services/lecturas.service.js';
+import * as multasService from '../services/multas.service.js';
+import * as descuentosService from '../services/descuentos.service.js';
+import * as cortesService from '../services/cortes.service.js';
+import * as repactacionesService from '../services/repactaciones.service.js';
+import { requireAdmin, requirePermission } from '../middleware/auth.middleware.js';
 import { z } from 'zod';
 
 // Schema for batch PDF generation
@@ -31,20 +41,59 @@ import {
   customerIdSchema,
 } from '../schemas/admin.schema.js';
 import { paymentSchema } from '../schemas/payment.schema.js';
+import {
+  createRutaSchema,
+  updateRutaSchema,
+  rutaIdSchema,
+} from '../schemas/rutas.schema.js';
+import {
+  createTarifaSchema,
+  updateTarifaSchema,
+  tarifaIdSchema,
+} from '../schemas/tarifas.schema.js';
+import {
+  createSubsidioSchema,
+  updateSubsidioSchema,
+  subsidioIdSchema,
+} from '../schemas/subsidios.schema.js';
+import {
+  updateClienteContactSchema,
+  updateClienteFullSchema,
+  updateDireccionSchema,
+  clienteIdSchema as clienteIdSchemaNew,
+} from '../schemas/clientes.schema.js';
+import {
+  createMedidorSchema,
+  updateMedidorSchema,
+  medidorIdSchema,
+} from '../schemas/medidores.schema.js';
+import {
+  updateLecturaSchema,
+  createCorreccionSchema,
+  lecturaIdSchema,
+  lecturasQuerySchema,
+} from '../schemas/lecturas.schema.js';
+import {
+  createMultaSchema,
+  updateMultaSchema,
+  multaIdSchema,
+} from '../schemas/multas.schema.js';
 
 const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // Apply admin auth middleware to all routes
   fastify.addHook('onRequest', requireAdmin);
 
   /**
-   * GET /admin/clientes?q=...
+   * GET /admin/clientes?q=...&page=1&limit=20
    * Search customers by RUT, name, or address
+   * If q is empty, returns all current customers paginated
    */
   fastify.get('/clientes', async (request, reply) => {
     try {
       const query = searchSchema.parse(request.query);
       const result = await adminService.searchCustomers(
         query.q,
+        query.page,
         query.limit,
         query.cursor
       );
@@ -876,6 +925,1797 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
   );
+
+  // =========================================================================
+  // RUTAS CRUD Endpoints
+  // =========================================================================
+
+  /**
+   * GET /admin/rutas
+   * List all rutas with pagination
+   */
+  fastify.get('/rutas', async (request, reply) => {
+    try {
+      const query = z
+        .object({
+          page: z.coerce.number().int().min(1).default(1),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        })
+        .parse(request.query);
+
+      const result = await rutasService.getAllRutas(query.page, query.limit);
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener rutas');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener rutas' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/rutas/:id
+   * Get a single ruta by ID
+   */
+  fastify.get('/rutas/:id', async (request, reply) => {
+    try {
+      const params = rutaIdSchema.parse(request.params);
+      const ruta = await rutasService.getRutaById(BigInt(params.id));
+      return ruta;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      if (error.message === 'Ruta no encontrada') {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: error.message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener ruta');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener ruta' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/rutas
+   * Create a new ruta (admin only)
+   */
+  fastify.post(
+    '/rutas',
+    { preHandler: requirePermission('rutas', 'create') },
+    async (request, reply) => {
+      try {
+        const data = createRutaSchema.parse(request.body);
+        const ruta = await rutasService.createRuta(data, request.user!.email!);
+
+        fastify.log.info(
+          { rutaId: ruta.id, adminEmail: request.user!.email },
+          'Ruta creada'
+        );
+
+        return reply.code(201).send(ruta);
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message.includes('Ya existe')) {
+          return reply.code(409).send({
+            error: { code: 'DUPLICATE', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al crear ruta');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al crear ruta' },
+        });
+      }
+    }
+  );
+
+  /**
+   * PATCH /admin/rutas/:id
+   * Update an existing ruta (admin only)
+   */
+  fastify.patch(
+    '/rutas/:id',
+    { preHandler: requirePermission('rutas', 'edit') },
+    async (request, reply) => {
+      try {
+        const params = rutaIdSchema.parse(request.params);
+        const data = updateRutaSchema.parse(request.body);
+        const ruta = await rutasService.updateRuta(
+          BigInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { rutaId: ruta.id, adminEmail: request.user!.email },
+          'Ruta actualizada'
+        );
+
+        return ruta;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Ruta no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        if (error.message.includes('Ya existe')) {
+          return reply.code(409).send({
+            error: { code: 'DUPLICATE', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar ruta');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar ruta' },
+        });
+      }
+    }
+  );
+
+  /**
+   * DELETE /admin/rutas/:id
+   * Delete a ruta (admin only, only if no direcciones)
+   */
+  fastify.delete(
+    '/rutas/:id',
+    { preHandler: requirePermission('rutas', 'delete') },
+    async (request, reply) => {
+      try {
+        const params = rutaIdSchema.parse(request.params);
+        const result = await rutasService.deleteRuta(
+          BigInt(params.id),
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { rutaId: params.id, adminEmail: request.user!.email },
+          'Ruta eliminada'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Ruta no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        if (error.message.includes('No se puede eliminar')) {
+          return reply.code(409).send({
+            error: { code: 'CONFLICT', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al eliminar ruta');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al eliminar ruta' },
+        });
+      }
+    }
+  );
+
+  /**
+   * GET /admin/rutas/:id/direcciones
+   * Get all direcciones for a specific ruta
+   */
+  fastify.get('/rutas/:id/direcciones', async (request, reply) => {
+    try {
+      const params = rutaIdSchema.parse(request.params);
+      const query = z
+        .object({
+          page: z.coerce.number().int().min(1).default(1),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        })
+        .parse(request.query);
+
+      const result = await rutasService.getDireccionesByRuta(
+        BigInt(params.id),
+        query.page,
+        query.limit
+      );
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener direcciones de ruta');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener direcciones' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/rutas/:id/direcciones/reasignar
+   * Reassign direcciones to a different ruta
+   */
+  fastify.post(
+    '/rutas/:id/direcciones/reasignar',
+    { preHandler: requirePermission('rutas', 'update') },
+    async (request, reply) => {
+      try {
+        const params = rutaIdSchema.parse(request.params);
+        const body = z
+          .object({
+            direccionIds: z.array(z.string()).min(1, 'Debe seleccionar al menos una dirección'),
+          })
+          .parse(request.body);
+
+        const result = await rutasService.reassignDirecciones(
+          body.direccionIds,
+          BigInt(params.id),
+          request.user!.email!
+        );
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Ruta destino no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al reasignar direcciones');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al reasignar direcciones' },
+        });
+      }
+    }
+  );
+
+  // =========================================================================
+  // TARIFAS CRUD Endpoints
+  // =========================================================================
+
+  /**
+   * GET /admin/tarifas
+   * List all tarifas with pagination
+   */
+  fastify.get('/tarifas', async (request, reply) => {
+    try {
+      const query = z
+        .object({
+          page: z.coerce.number().int().min(1).default(1),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        })
+        .parse(request.query);
+
+      const result = await tarifasService.getAllTarifas(query.page, query.limit);
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener tarifas');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener tarifas' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/tarifas/vigente
+   * Get the current active tarifa
+   */
+  fastify.get('/tarifas/vigente', async (request, reply) => {
+    try {
+      const tarifa = await tarifasService.getCurrentTarifa();
+      if (!tarifa) {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: 'No hay tarifa vigente' },
+        });
+      }
+      return tarifa;
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener tarifa vigente');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener tarifa vigente' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/tarifas/:id
+   * Get a single tarifa by ID
+   */
+  fastify.get('/tarifas/:id', async (request, reply) => {
+    try {
+      const params = tarifaIdSchema.parse(request.params);
+      const tarifa = await tarifasService.getTarifaById(BigInt(params.id));
+      return tarifa;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      if (error.message === 'Tarifa no encontrada') {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: error.message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener tarifa');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener tarifa' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/tarifas
+   * Create a new tarifa (admin only)
+   */
+  fastify.post(
+    '/tarifas',
+    { preHandler: requirePermission('tarifas', 'create') },
+    async (request, reply) => {
+      try {
+        const data = createTarifaSchema.parse(request.body);
+        const tarifa = await tarifasService.createTarifa(data, request.user!.email!);
+
+        fastify.log.info(
+          { tarifaId: tarifa.id, adminEmail: request.user!.email },
+          'Tarifa creada'
+        );
+
+        return reply.code(201).send(tarifa);
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        fastify.log.error(error, 'Error al crear tarifa');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al crear tarifa' },
+        });
+      }
+    }
+  );
+
+  /**
+   * PATCH /admin/tarifas/:id
+   * Update an existing tarifa (admin only)
+   */
+  fastify.patch(
+    '/tarifas/:id',
+    { preHandler: requirePermission('tarifas', 'edit') },
+    async (request, reply) => {
+      try {
+        const params = tarifaIdSchema.parse(request.params);
+        const data = updateTarifaSchema.parse(request.body);
+        const tarifa = await tarifasService.updateTarifa(
+          BigInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { tarifaId: tarifa.id, adminEmail: request.user!.email },
+          'Tarifa actualizada'
+        );
+
+        return tarifa;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Tarifa no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar tarifa');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar tarifa' },
+        });
+      }
+    }
+  );
+
+  /**
+   * DELETE /admin/tarifas/:id
+   * Delete a tarifa (admin only, not the current one)
+   */
+  fastify.delete(
+    '/tarifas/:id',
+    { preHandler: requirePermission('tarifas', 'delete') },
+    async (request, reply) => {
+      try {
+        const params = tarifaIdSchema.parse(request.params);
+        const result = await tarifasService.deleteTarifa(
+          BigInt(params.id),
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { tarifaId: params.id, adminEmail: request.user!.email },
+          'Tarifa eliminada'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Tarifa no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        if (error.message.includes('No se puede eliminar')) {
+          return reply.code(409).send({
+            error: { code: 'CONFLICT', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al eliminar tarifa');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al eliminar tarifa' },
+        });
+      }
+    }
+  );
+
+  // =========================================================================
+  // SUBSIDIOS CRUD Endpoints
+  // =========================================================================
+
+  /**
+   * GET /admin/subsidios
+   * List all subsidios with pagination
+   */
+  fastify.get('/subsidios', async (request, reply) => {
+    try {
+      const query = z
+        .object({
+          page: z.coerce.number().int().min(1).default(1),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+        })
+        .parse(request.query);
+
+      const result = await subsidiosService.getAllSubsidios(query.page, query.limit);
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener subsidios');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener subsidios' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/subsidios/activos
+   * Get all active subsidios
+   */
+  fastify.get('/subsidios/activos', async (request, reply) => {
+    try {
+      const subsidios = await subsidiosService.getActiveSubsidios();
+      return { subsidios };
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener subsidios activos');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener subsidios activos' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/subsidios/:id
+   * Get a single subsidio by ID
+   */
+  fastify.get('/subsidios/:id', async (request, reply) => {
+    try {
+      const params = subsidioIdSchema.parse(request.params);
+      const subsidio = await subsidiosService.getSubsidioById(parseInt(params.id));
+      return subsidio;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      if (error.message === 'Subsidio no encontrado') {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: error.message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener subsidio');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener subsidio' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/subsidios
+   * Create a new subsidio (admin only)
+   */
+  fastify.post(
+    '/subsidios',
+    { preHandler: requirePermission('subsidios', 'create') },
+    async (request, reply) => {
+      try {
+        const data = createSubsidioSchema.parse(request.body);
+        const subsidio = await subsidiosService.createSubsidio(data, request.user!.email!);
+
+        fastify.log.info(
+          { subsidioId: subsidio.id, adminEmail: request.user!.email },
+          'Subsidio creado'
+        );
+
+        return reply.code(201).send(subsidio);
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message.includes('Ya existe')) {
+          return reply.code(409).send({
+            error: { code: 'DUPLICATE', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al crear subsidio');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al crear subsidio' },
+        });
+      }
+    }
+  );
+
+  /**
+   * PATCH /admin/subsidios/:id
+   * Update an existing subsidio (admin only)
+   */
+  fastify.patch(
+    '/subsidios/:id',
+    { preHandler: requirePermission('subsidios', 'edit') },
+    async (request, reply) => {
+      try {
+        const params = subsidioIdSchema.parse(request.params);
+        const data = updateSubsidioSchema.parse(request.body);
+        const subsidio = await subsidiosService.updateSubsidio(
+          parseInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { subsidioId: subsidio.id, adminEmail: request.user!.email },
+          'Subsidio actualizado'
+        );
+
+        return subsidio;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Subsidio no encontrado') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar subsidio');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar subsidio' },
+        });
+      }
+    }
+  );
+
+  /**
+   * DELETE /admin/subsidios/:id
+   * Delete a subsidio (admin only, only if no historial)
+   */
+  fastify.delete(
+    '/subsidios/:id',
+    { preHandler: requirePermission('subsidios', 'delete') },
+    async (request, reply) => {
+      try {
+        const params = subsidioIdSchema.parse(request.params);
+        const result = await subsidiosService.deleteSubsidio(
+          parseInt(params.id),
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { subsidioId: params.id, adminEmail: request.user!.email },
+          'Subsidio eliminado'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Subsidio no encontrado') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        if (error.message.includes('No se puede eliminar')) {
+          return reply.code(409).send({
+            error: { code: 'CONFLICT', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al eliminar subsidio');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al eliminar subsidio' },
+        });
+      }
+    }
+  );
+
+  // =========================================================================
+  // SUBSIDIO HISTORIAL Endpoints
+  // =========================================================================
+
+  /**
+   * GET /admin/subsidio-historial
+   * List all subsidio historial entries with pagination and filters
+   */
+  fastify.get('/subsidio-historial', async (request, reply) => {
+    try {
+      const query = z
+        .object({
+          page: z.coerce.number().int().min(1).default(1),
+          limit: z.coerce.number().int().min(1).max(100).default(20),
+          subsidioId: z.coerce.number().optional(),
+          tipoCambio: z.string().optional(),
+          search: z.string().optional(),
+        })
+        .parse(request.query);
+
+      const result = await subsidiosService.getSubsidioHistorial({
+        page: query.page,
+        limit: query.limit,
+        subsidioId: query.subsidioId,
+        tipoCambio: query.tipoCambio,
+        search: query.search,
+      });
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener historial de subsidios');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener historial' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/subsidio-historial/asignar
+   * Assign a client to a subsidio
+   */
+  fastify.post(
+    '/subsidio-historial/asignar',
+    { preHandler: requirePermission('subsidios', 'create') },
+    async (request, reply) => {
+      try {
+        const body = z
+          .object({
+            clienteId: z.string(),
+            subsidioId: z.coerce.number(),
+          })
+          .parse(request.body);
+
+        const result = await subsidiosService.assignSubsidioToClient(
+          BigInt(body.clienteId),
+          body.subsidioId,
+          request.user!.email!
+        );
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message.includes('no encontrado')) {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al asignar subsidio');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al asignar subsidio' },
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /admin/subsidio-historial/remover
+   * Remove a client from a subsidio
+   */
+  fastify.post(
+    '/subsidio-historial/remover',
+    { preHandler: requirePermission('subsidios', 'delete') },
+    async (request, reply) => {
+      try {
+        const body = z
+          .object({
+            clienteId: z.string(),
+            subsidioId: z.coerce.number(),
+            motivo: z.string().optional(),
+          })
+          .parse(request.body);
+
+        const result = await subsidiosService.removeSubsidioFromClient(
+          BigInt(body.clienteId),
+          body.subsidioId,
+          body.motivo || '',
+          request.user!.email!
+        );
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message.includes('no encontrado')) {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al remover subsidio');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al remover subsidio' },
+        });
+      }
+    }
+  );
+
+  // =========================================================================
+  // CLIENTES Edit Endpoints
+  // =========================================================================
+
+  /**
+   * GET /admin/clientes/:id/editar
+   * Get client data for editing
+   */
+  fastify.get('/clientes/:id/editar', async (request, reply) => {
+    try {
+      const params = clienteIdSchemaNew.parse(request.params);
+      const cliente = await clientesService.getClienteForEdit(BigInt(params.id));
+      return cliente;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      if (error.message === 'Cliente no encontrado') {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: error.message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener cliente para editar');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener cliente' },
+      });
+    }
+  });
+
+  /**
+   * PATCH /admin/clientes/:id/contacto
+   * Update client contact info only (billing_clerk and above)
+   */
+  fastify.patch(
+    '/clientes/:id/contacto',
+    { preHandler: requirePermission('clientes', 'edit_contact') },
+    async (request, reply) => {
+      try {
+        const params = clienteIdSchemaNew.parse(request.params);
+        const data = updateClienteContactSchema.parse(request.body);
+        const result = await clientesService.updateClienteContact(
+          BigInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { clienteId: params.id, adminEmail: request.user!.email },
+          'Contacto de cliente actualizado'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Cliente no encontrado') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar contacto del cliente');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar contacto' },
+        });
+      }
+    }
+  );
+
+  /**
+   * PATCH /admin/clientes/:id
+   * Update full client info (supervisor and above)
+   */
+  fastify.patch(
+    '/clientes/:id',
+    { preHandler: requirePermission('clientes', 'edit_all') },
+    async (request, reply) => {
+      try {
+        const params = clienteIdSchemaNew.parse(request.params);
+        const data = updateClienteFullSchema.parse(request.body);
+        const result = await clientesService.updateClienteFull(
+          BigInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { clienteId: params.id, adminEmail: request.user!.email },
+          'Cliente actualizado'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Cliente no encontrado') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        if (error.message === 'RUT inválido') {
+          return reply.code(400).send({
+            error: { code: 'INVALID_RUT', message: error.message },
+          });
+        }
+        if (error.message.includes('Ya existe')) {
+          return reply.code(409).send({
+            error: { code: 'DUPLICATE', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar cliente');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar cliente' },
+        });
+      }
+    }
+  );
+
+  /**
+   * PATCH /admin/clientes/:id/direccion
+   * Update client address (billing_clerk and above)
+   */
+  fastify.patch(
+    '/clientes/:id/direccion',
+    { preHandler: requirePermission('clientes', 'edit_contact') },
+    async (request, reply) => {
+      try {
+        const params = clienteIdSchemaNew.parse(request.params);
+        const data = updateDireccionSchema.parse(request.body);
+        const result = await clientesService.updateClienteDireccion(
+          BigInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { clienteId: params.id, adminEmail: request.user!.email },
+          'Dirección de cliente actualizada'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Cliente no encontrado') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar dirección');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar dirección' },
+        });
+      }
+    }
+  );
+
+  // =========================================================================
+  // DIRECCIONES Search Endpoint
+  // =========================================================================
+
+  /**
+   * GET /admin/direcciones/search
+   * Search direcciones by address, cliente name, or numero_cliente
+   */
+  fastify.get('/direcciones/search', async (request, reply) => {
+    try {
+      const query = z
+        .object({
+          q: z.string().min(2).max(100),
+          limit: z.coerce.number().int().min(1).max(50).default(10),
+        })
+        .parse(request.query);
+
+      const direcciones = await prisma.direcciones.findMany({
+        where: {
+          OR: [
+            { direccion_calle: { contains: query.q, mode: 'insensitive' } },
+            { poblacion: { contains: query.q, mode: 'insensitive' } },
+            { cliente: { numero_cliente: { contains: query.q, mode: 'insensitive' } } },
+            { cliente: { primer_nombre: { contains: query.q, mode: 'insensitive' } } },
+            { cliente: { primer_apellido: { contains: query.q, mode: 'insensitive' } } },
+          ],
+        },
+        take: query.limit,
+        include: {
+          cliente: {
+            select: {
+              id: true,
+              numero_cliente: true,
+              primer_nombre: true,
+              primer_apellido: true,
+            },
+          },
+          ruta: {
+            select: { nombre: true },
+          },
+        },
+        orderBy: { direccion_calle: 'asc' },
+      });
+
+      return {
+        direcciones: direcciones.map((d) => ({
+          id: d.id.toString(),
+          direccion: `${d.direccion_calle} ${d.direccion_numero || ''}`.trim(),
+          poblacion: d.poblacion,
+          clienteId: d.cliente_id.toString(),
+          clienteNombre: d.cliente
+            ? `${d.cliente.primer_nombre} ${d.cliente.primer_apellido}`
+            : null,
+          clienteNumero: d.cliente?.numero_cliente || null,
+          rutaNombre: d.ruta?.nombre || null,
+        })),
+      };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al buscar direcciones');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al buscar direcciones' },
+      });
+    }
+  });
+
+  // =========================================================================
+  // MEDIDORES CRUD Endpoints
+  // =========================================================================
+
+  /**
+   * GET /admin/medidores
+   * List all medidores with pagination and filters
+   */
+  fastify.get('/medidores', async (request, reply) => {
+    try {
+      const query = z
+        .object({
+          page: z.coerce.number().int().min(1).default(1),
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+          estado: z.string().optional(),
+          search: z.string().optional(),
+        })
+        .parse(request.query);
+
+      const result = await medidoresService.getAllMedidores(query.page, query.limit, {
+        estado: query.estado,
+        search: query.search,
+      });
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener medidores');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener medidores' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/medidores/:id
+   * Get a single medidor by ID with full details
+   */
+  fastify.get('/medidores/:id', async (request, reply) => {
+    try {
+      const params = medidorIdSchema.parse(request.params);
+      const medidor = await medidoresService.getMedidorById(BigInt(params.id));
+      return medidor;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      if (error.message === 'Medidor no encontrado') {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: error.message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener medidor');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener medidor' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/clientes/:id/medidores
+   * Get all medidores for a specific cliente
+   */
+  fastify.get('/clientes/:id/medidores', async (request, reply) => {
+    try {
+      const params = clienteIdSchemaNew.parse(request.params);
+      const medidores = await medidoresService.getMedidoresByCliente(BigInt(params.id));
+      return { medidores };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener medidores del cliente');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener medidores' },
+      });
+    }
+  });
+
+  /**
+   * POST /admin/medidores
+   * Create a new medidor (supervisor+)
+   */
+  fastify.post(
+    '/medidores',
+    { preHandler: requirePermission('medidores', 'create') },
+    async (request, reply) => {
+      try {
+        const data = createMedidorSchema.parse(request.body);
+        const medidor = await medidoresService.createMedidor(data, request.user!.email!);
+
+        fastify.log.info(
+          { medidorId: medidor.id, adminEmail: request.user!.email },
+          'Medidor creado'
+        );
+
+        return reply.code(201).send(medidor);
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Dirección no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al crear medidor');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al crear medidor' },
+        });
+      }
+    }
+  );
+
+  /**
+   * PATCH /admin/medidores/:id
+   * Update an existing medidor (supervisor+)
+   */
+  fastify.patch(
+    '/medidores/:id',
+    { preHandler: requirePermission('medidores', 'edit') },
+    async (request, reply) => {
+      try {
+        const params = medidorIdSchema.parse(request.params);
+        const data = updateMedidorSchema.parse(request.body);
+        const medidor = await medidoresService.updateMedidor(
+          BigInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { medidorId: medidor.id, adminEmail: request.user!.email },
+          'Medidor actualizado'
+        );
+
+        return medidor;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Medidor no encontrado') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar medidor');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar medidor' },
+        });
+      }
+    }
+  );
+
+  /**
+   * PATCH /admin/medidores/:id/toggle-ruta
+   * Toggle mostrar_en_ruta for a medidor
+   */
+  fastify.patch(
+    '/medidores/:id/toggle-ruta',
+    { preHandler: requirePermission('medidores', 'edit') },
+    async (request, reply) => {
+      try {
+        const params = medidorIdSchema.parse(request.params);
+        const result = await medidoresService.toggleMostrarEnRuta(
+          BigInt(params.id),
+          request.user!.email!
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Medidor no encontrado') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar medidor');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar medidor' },
+        });
+      }
+    }
+  );
+
+  /**
+   * DELETE /admin/medidores/:id
+   * Delete a medidor (admin only, only if no lecturas)
+   */
+  fastify.delete(
+    '/medidores/:id',
+    { preHandler: requirePermission('medidores', 'delete') },
+    async (request, reply) => {
+      try {
+        const params = medidorIdSchema.parse(request.params);
+        const result = await medidoresService.deleteMedidor(
+          BigInt(params.id),
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { medidorId: params.id, adminEmail: request.user!.email },
+          'Medidor eliminado'
+        );
+
+        return result;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Medidor no encontrado') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        if (error.message.includes('No se puede eliminar')) {
+          return reply.code(409).send({
+            error: { code: 'CONFLICT', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al eliminar medidor');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al eliminar medidor' },
+        });
+      }
+    }
+  );
+
+  // =========================================================================
+  // LECTURAS Endpoints
+  // =========================================================================
+
+  /**
+   * GET /admin/lecturas
+   * List all lecturas with filters
+   */
+  fastify.get('/lecturas', async (request, reply) => {
+    try {
+      const query = lecturasQuerySchema.parse(request.query);
+      const result = await lecturasService.getAllLecturas({
+        page: query.page,
+        limit: query.limit,
+        medidorId: query.medidorId,
+        clienteId: query.clienteId,
+        periodoAno: query.periodoAno,
+        periodoMes: query.periodoMes,
+        conCorreccion: query.conCorreccion,
+        search: query.search,
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
+      });
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener lecturas');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener lecturas' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/lecturas/:id
+   * Get a single lectura by ID
+   */
+  fastify.get('/lecturas/:id', async (request, reply) => {
+    try {
+      const params = lecturaIdSchema.parse(request.params);
+      const lectura = await lecturasService.getLecturaById(BigInt(params.id));
+      return lectura;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      if (error.message === 'Lectura no encontrada') {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: error.message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener lectura');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener lectura' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/lecturas/:id/context
+   * Get context for a lectura (previous reading and average consumption)
+   */
+  fastify.get('/lecturas/:id/context', async (request, reply) => {
+    try {
+      const params = lecturaIdSchema.parse(request.params);
+      const context = await lecturasService.getLecturaContext(BigInt(params.id));
+      return context;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      if (error.message === 'Lectura no encontrada') {
+        return reply.code(404).send({
+          error: { code: 'NOT_FOUND', message: error.message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener contexto de lectura');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener contexto' },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/clientes/:id/lecturas
+   * Get lecturas for a cliente
+   */
+  fastify.get('/clientes/:id/lecturas', async (request, reply) => {
+    try {
+      const params = clienteIdSchemaNew.parse(request.params);
+      const lecturas = await lecturasService.getLecturasByCliente(BigInt(params.id));
+      return { lecturas };
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+        });
+      }
+      fastify.log.error(error, 'Error al obtener lecturas del cliente');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener lecturas' },
+      });
+    }
+  });
+
+  /**
+   * PATCH /admin/lecturas/:id
+   * Update lectura before boleta (edit_before_boleta permission)
+   */
+  fastify.patch(
+    '/lecturas/:id',
+    { preHandler: requirePermission('lecturas', 'edit_before_boleta') },
+    async (request, reply) => {
+      try {
+        const params = lecturaIdSchema.parse(request.params);
+        const data = updateLecturaSchema.parse(request.body);
+        const lectura = await lecturasService.updateLectura(
+          BigInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { lecturaId: params.id, adminEmail: request.user!.email },
+          'Lectura actualizada'
+        );
+
+        return lectura;
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Lectura no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        if (error.message.includes('No se puede editar')) {
+          return reply.code(409).send({
+            error: { code: 'CONFLICT', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al actualizar lectura');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar lectura' },
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /admin/lecturas/:id/correccion
+   * Create correction for lectura (after boleta)
+   */
+  fastify.post(
+    '/lecturas/:id/correccion',
+    { preHandler: requirePermission('lecturas', 'create_correction') },
+    async (request, reply) => {
+      try {
+        const params = lecturaIdSchema.parse(request.params);
+        const data = createCorreccionSchema.parse(request.body);
+        const result = await lecturasService.createCorreccion(
+          BigInt(params.id),
+          data,
+          request.user!.email!
+        );
+
+        fastify.log.info(
+          { lecturaId: params.id, adminEmail: request.user!.email },
+          'Corrección de lectura creada'
+        );
+
+        return reply.code(201).send(result);
+      } catch (error: any) {
+        if (error instanceof ZodError) {
+          return reply.code(400).send({
+            error: { code: 'VALIDATION_ERROR', message: error.errors[0].message },
+          });
+        }
+        if (error.message === 'Lectura no encontrada') {
+          return reply.code(404).send({
+            error: { code: 'NOT_FOUND', message: error.message },
+          });
+        }
+        fastify.log.error(error, 'Error al crear corrección');
+        return reply.code(500).send({
+          error: { code: 'INTERNAL_ERROR', message: 'Error al crear corrección' },
+        });
+      }
+    }
+  );
+
+  // =========================================================================
+  // MULTAS CRUD Endpoints
+  // =========================================================================
+
+  fastify.get('/multas', async (request, reply) => {
+    try {
+      const query = z.object({
+        page: z.coerce.number().int().min(1).default(1),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+        estado: z.string().optional(),
+      }).parse(request.query);
+      const result = await multasService.getAllMultas(query.page, query.limit, query.estado);
+      return result;
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener multas');
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener multas' } });
+    }
+  });
+
+  fastify.get('/multas/:id', async (request, reply) => {
+    try {
+      const params = multaIdSchema.parse(request.params);
+      const multa = await multasService.getMultaById(BigInt(params.id));
+      return multa;
+    } catch (error: any) {
+      if (error.message === 'Multa no encontrada') {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      }
+      fastify.log.error(error, 'Error al obtener multa');
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener multa' } });
+    }
+  });
+
+  fastify.get('/clientes/:id/multas', async (request, reply) => {
+    try {
+      const params = clienteIdSchemaNew.parse(request.params);
+      const multas = await multasService.getMultasByCliente(BigInt(params.id));
+      return { multas };
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener multas del cliente');
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener multas' } });
+    }
+  });
+
+  fastify.post('/multas', { preHandler: requirePermission('multas', 'create') }, async (request, reply) => {
+    try {
+      const data = createMultaSchema.parse(request.body);
+      const multa = await multasService.createMulta(data, request.user!.email!);
+      return reply.code(201).send(multa);
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
+      }
+      if (error.message === 'Cliente no encontrado') {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      }
+      fastify.log.error(error, 'Error al crear multa');
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al crear multa' } });
+    }
+  });
+
+  fastify.patch('/multas/:id', { preHandler: requirePermission('multas', 'edit') }, async (request, reply) => {
+    try {
+      const params = multaIdSchema.parse(request.params);
+      const data = updateMultaSchema.parse(request.body);
+      const multa = await multasService.updateMulta(BigInt(params.id), data, request.user!.email!);
+      return multa;
+    } catch (error: any) {
+      if (error.message === 'Multa no encontrada') {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      }
+      fastify.log.error(error, 'Error al actualizar multa');
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar multa' } });
+    }
+  });
+
+  fastify.post('/multas/:id/cancelar', { preHandler: requirePermission('multas', 'cancel') }, async (request, reply) => {
+    try {
+      const params = multaIdSchema.parse(request.params);
+      const result = await multasService.cancelMulta(BigInt(params.id), request.user!.email!);
+      return result;
+    } catch (error: any) {
+      if (error.message === 'Multa no encontrada') {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      }
+      if (error.message.includes('ya está cancelada')) {
+        return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });
+      }
+      fastify.log.error(error, 'Error al cancelar multa');
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al cancelar multa' } });
+    }
+  });
+
+  // =========================================================================
+  // DESCUENTOS CRUD Endpoints
+  // =========================================================================
+
+  fastify.get('/descuentos', async (request, reply) => {
+    try {
+      const query = z.object({ page: z.coerce.number().default(1), limit: z.coerce.number().default(50) }).parse(request.query);
+      return await descuentosService.getAllDescuentos(query.page, query.limit);
+    } catch (error: any) {
+      fastify.log.error(error);
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener descuentos' } });
+    }
+  });
+
+  fastify.get('/descuentos/:id', async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await descuentosService.getDescuentoById(BigInt(id));
+    } catch (error: any) {
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.post('/descuentos', { preHandler: requirePermission('descuentos', 'create') }, async (request, reply) => {
+    try {
+      const data = z.object({ nombre: z.string().min(1), porcentaje: z.number().min(0).max(100), fechaInicio: z.string().optional(), fechaFin: z.string().optional(), descripcion: z.string().optional() }).parse(request.body);
+      return reply.code(201).send(await descuentosService.createDescuento(data, request.user!.email!));
+    } catch (error: any) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al crear descuento' } });
+    }
+  });
+
+  fastify.patch('/descuentos/:id', { preHandler: requirePermission('descuentos', 'edit') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      const data = request.body;
+      return await descuentosService.updateDescuento(BigInt(id), data, request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar' } });
+    }
+  });
+
+  fastify.delete('/descuentos/:id', { preHandler: requirePermission('descuentos', 'delete') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await descuentosService.deleteDescuento(BigInt(id), request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al eliminar' } });
+    }
+  });
+
+  // =========================================================================
+  // CORTES DE SERVICIO CRUD Endpoints
+  // =========================================================================
+
+  fastify.get('/cortes', async (request, reply) => {
+    try {
+      const query = z.object({ page: z.coerce.number().default(1), limit: z.coerce.number().default(50), estado: z.string().optional() }).parse(request.query);
+      return await cortesService.getAllCortes(query.page, query.limit, query.estado);
+    } catch (error: any) {
+      fastify.log.error(error);
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener cortes' } });
+    }
+  });
+
+  fastify.get('/cortes/:id', async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await cortesService.getCorteById(BigInt(id));
+    } catch (error: any) {
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.get('/clientes/:id/cortes', async (request, reply) => {
+    try {
+      const params = clienteIdSchemaNew.parse(request.params);
+      const cortes = await cortesService.getCortesByCliente(BigInt(params.id));
+      return { cortes };
+    } catch (error: any) {
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.get('/clientes/:id/descuentos', async (request, reply) => {
+    try {
+      const params = clienteIdSchemaNew.parse(request.params);
+      const descuentos = await descuentosService.getDescuentosByCliente(BigInt(params.id));
+      return { descuentos };
+    } catch (error: any) {
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener descuentos del cliente' } });
+    }
+  });
+
+  fastify.post('/cortes', { preHandler: requirePermission('cortes_servicio', 'create') }, async (request, reply) => {
+    try {
+      const data = z.object({ clienteId: z.string().regex(/^\d+$/), fechaCorte: z.string().optional(), motivoCorte: z.string().min(1), observaciones: z.string().optional() }).parse(request.body);
+      return reply.code(201).send(await cortesService.createCorte(data, request.user!.email!));
+    } catch (error: any) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al crear corte' } });
+    }
+  });
+
+  fastify.post('/cortes/:id/reposicion', { preHandler: requirePermission('cortes_servicio', 'authorize_reposicion') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await cortesService.authorizarReposicion(BigInt(id), request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      if (error.message?.includes('ya fue')) return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  // =========================================================================
+  // REPACTACIONES CRUD Endpoints
+  // =========================================================================
+
+  fastify.get('/repactaciones', async (request, reply) => {
+    try {
+      const query = z.object({ page: z.coerce.number().default(1), limit: z.coerce.number().default(50), estado: z.string().optional() }).parse(request.query);
+      return await repactacionesService.getAllRepactaciones(query.page, query.limit, query.estado);
+    } catch (error: any) {
+      fastify.log.error(error);
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.get('/repactaciones/:id', async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await repactacionesService.getRepactacionById(BigInt(id));
+    } catch (error: any) {
+      if (error.message?.includes('no encontrada')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.get('/clientes/:id/repactaciones', async (request, reply) => {
+    try {
+      const params = clienteIdSchemaNew.parse(request.params);
+      const repactaciones = await repactacionesService.getRepactacionesByCliente(BigInt(params.id));
+      return { repactaciones };
+    } catch (error: any) {
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.post('/repactaciones', { preHandler: requirePermission('repactaciones', 'create') }, async (request, reply) => {
+    try {
+      const data = z.object({
+        clienteId: z.string().regex(/^\d+$/),
+        montoDeudaInicial: z.number().positive(),
+        totalCuotas: z.number().int().min(1).max(60),
+        fechaInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        numeroConvenio: z.string().optional(),
+        observaciones: z.string().optional(),
+      }).parse(request.body);
+      return reply.code(201).send(await repactacionesService.createRepactacion(data, request.user!.email!));
+    } catch (error: any) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      fastify.log.error(error);
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.patch('/repactaciones/:id', { preHandler: requirePermission('repactaciones', 'edit') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await repactacionesService.updateRepactacion(BigInt(id), request.body, request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrada')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.post('/repactaciones/:id/cancelar', { preHandler: requirePermission('repactaciones', 'cancel') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await repactacionesService.cancelRepactacion(BigInt(id), request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrada')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      if (error.message?.includes('ya está')) return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  // Solicitudes de repactación
+  fastify.get('/solicitudes-repactacion', async (request, reply) => {
+    try {
+      const query = z.object({ page: z.coerce.number().default(1), limit: z.coerce.number().default(50), estado: z.string().optional() }).parse(request.query);
+      return await repactacionesService.getAllSolicitudes(query.page, query.limit, query.estado);
+    } catch (error: any) {
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.post('/solicitudes-repactacion/:id/aprobar', { preHandler: requirePermission('solicitudes_repactacion', 'approve_request') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await repactacionesService.approveSolicitud(BigInt(id), request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrada')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      if (error.message?.includes('ya fue')) return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.post('/solicitudes-repactacion/:id/rechazar', { preHandler: requirePermission('solicitudes_repactacion', 'approve_request') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      const { motivoRechazo } = z.object({ motivoRechazo: z.string().min(1) }).parse(request.body);
+      return await repactacionesService.rejectSolicitud(BigInt(id), motivoRechazo, request.user!.email!);
+    } catch (error: any) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
+      if (error.message?.includes('no encontrada')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      if (error.message?.includes('ya fue')) return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
 };
 
 export default adminRoutes;
