@@ -82,7 +82,8 @@ const emptyForm: CorteFormData = {
 export default function AdminCortesPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const canCreate = useCanAccess('cortes_servicio', 'create');
+  const _canCreate = useCanAccess('cortes_servicio', 'create');
+  void _canCreate; // For future use
   const canReposicion = useCanAccess('cortes_servicio', 'authorize_reposicion');
 
   const [isModalOpen, setIsModalOpen] = useState(false);

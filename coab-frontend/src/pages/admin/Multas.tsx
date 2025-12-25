@@ -31,7 +31,8 @@ interface MultasResponse {
 export default function MultasPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const canCreate = useCanAccess('multas', 'create');
+  const _canCreate = useCanAccess('multas', 'create');
+  void _canCreate; // For future use
   const canEdit = useCanAccess('multas', 'edit');
   const canCancel = useCanAccess('multas', 'cancel');
 

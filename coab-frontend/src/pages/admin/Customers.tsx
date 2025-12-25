@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import adminApiClient from '@/lib/adminApi';
 import { formatearRUT } from '@coab/utils';
 import { Search, Lock, Users } from 'lucide-react';
@@ -127,7 +126,7 @@ export default function CustomersPage() {
       render: (customer: Customer) => (
         <StatusBadge
           status={customer.estadoCuenta === 'AL_DIA' ? 'activo' : 'pendiente'}
-          customLabel={customer.estadoCuenta === 'AL_DIA' ? 'Al día' : 'Moroso'}
+          label={customer.estadoCuenta === 'AL_DIA' ? 'Al día' : 'Moroso'}
         />
       ),
     },

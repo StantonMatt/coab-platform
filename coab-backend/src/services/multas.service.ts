@@ -154,8 +154,8 @@ export async function updateMulta(id: bigint, data: any, adminEmail: string) {
       ...(data.monto !== undefined && { monto: data.monto }),
       ...(data.motivo !== undefined && { motivo: data.motivo }),
       ...(data.descripcion !== undefined && { descripcion: data.descripcion }),
-      ...(data.fechaAplicacion !== undefined && {
-        fecha_aplicacion: data.fechaAplicacion ? new Date(data.fechaAplicacion) : null,
+      ...(data.fechaAplicacion !== undefined && data.fechaAplicacion && {
+        fecha_aplicacion: new Date(data.fechaAplicacion),
       }),
       updated_at: new Date(),
     },

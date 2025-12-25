@@ -227,6 +227,7 @@ export async function getLecturaContext(id: bigint) {
     where: { id },
     include: {
       medidor: true,
+      lectura_correcciones: true,
     },
   });
 
@@ -311,7 +312,7 @@ export async function getLecturaContext(id: bigint) {
 
   // Calculate current consumption
   const valorActual = lectura.lectura_correcciones
-    ? Number((lectura as any).lectura_correcciones.valor_corregido)
+    ? Number(lectura.lectura_correcciones.valor_corregido)
     : Number(lectura.valor_lectura);
   const consumoActual = valorLecturaAnterior !== null
     ? valorActual - valorLecturaAnterior

@@ -362,8 +362,11 @@ export async function solicitarRepactacion(
   }
 
   // Calculate total debt from pending boletas
+  // For pending boletas, the full monto_total is owed
+  // For parcial boletas, we'd need to calculate from transacciones, but for simplicity
+  // we treat pending as full amount owed
   const montoDeuda = cliente.boletas.reduce(
-    (sum, b) => sum + (Number(b.monto_total) - Number(b.monto_pagado || 0)),
+    (sum, b) => sum + Number(b.monto_total),
     0
   );
 

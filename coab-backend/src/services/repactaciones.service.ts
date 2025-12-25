@@ -41,7 +41,7 @@ export async function getRepactacionById(id: bigint) {
   if (!r) throw new Error('Repactación no encontrada');
   return {
     ...transformRepactacion(r),
-    boletas: r.boletas.map(b => ({ id: b.id.toString(), periodo: b.periodo, monto: Number(b.monto_total), estado: b.estado })),
+    boletas: r.boletas.map(b => ({ id: b.id.toString(), periodoDesde: b.periodo_desde, periodoHasta: b.periodo_hasta, monto: Number(b.monto_total), estado: b.estado })),
   };
 }
 

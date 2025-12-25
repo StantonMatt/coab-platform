@@ -4,13 +4,19 @@ function transformDescuento(d: any) {
   return {
     id: d.id.toString(),
     nombre: d.nombre,
-    porcentaje: Number(d.porcentaje),
+    descripcion: d.descripcion,
+    tipoDescuento: d.tipo_descuento,
+    valor: Number(d.valor),
     fechaInicio: d.fecha_inicio?.toISOString().split('T')[0] || null,
     fechaFin: d.fecha_fin?.toISOString().split('T')[0] || null,
-    estado: d.estado,
-    descripcion: d.descripcion,
+    activo: d.activo ?? true,
+    aplicaCargoFijo: d.aplica_cargo_fijo ?? true,
+    aplicaConsumo: d.aplica_consumo ?? true,
+    consumoMinimo: d.consumo_minimo ? Number(d.consumo_minimo) : null,
+    consumoMaximo: d.consumo_maximo ? Number(d.consumo_maximo) : null,
+    creadoPor: d.creado_por,
     fechaCreacion: d.fecha_creacion,
-    esVigente: d.estado === 'activo' && (!d.fecha_fin || new Date(d.fecha_fin) > new Date()),
+    esVigente: (d.activo ?? true) && (!d.fecha_fin || new Date(d.fecha_fin) > new Date()),
   };
 }
 
@@ -36,10 +42,17 @@ export async function createDescuento(data: any, adminEmail: string) {
   const d = await prisma.descuentos.create({
     data: {
       nombre: data.nombre,
-      porcentaje: data.porcentaje,
-      fecha_inicio: data.fechaInicio ? new Date(data.fechaInicio) : null,
-      fecha_fin: data.fechaFin ? new Date(data.fechaFin) : null,
       descripcion: data.descripcion || null,
+      tipo_descuento: data.tipoDescuento || 'porcentaje',
+      valor: data.valor,
+      fecha_inicio: new Date(data.fechaInicio),
+      fecha_fin: data.fechaFin ? new Date(data.fechaFin) : null,
+      activo: data.activo ?? true,
+      aplica_cargo_fijo: data.aplicaCargoFijo ?? true,
+      aplica_consumo: data.aplicaConsumo ?? true,
+      consumo_minimo: data.consumoMinimo ?? null,
+      consumo_maximo: data.consumoMaximo ?? null,
+      creado_por: adminEmail,
     },
   });
   await prisma.log_auditoria.create({
@@ -51,16 +64,24 @@ export async function createDescuento(data: any, adminEmail: string) {
 export async function updateDescuento(id: bigint, data: any, adminEmail: string) {
   const existing = await prisma.descuentos.findUnique({ where: { id } });
   if (!existing) throw new Error('Descuento no encontrado');
+  
+  const updateData: any = {};
+  if (data.nombre !== undefined) updateData.nombre = data.nombre;
+  if (data.descripcion !== undefined) updateData.descripcion = data.descripcion;
+  if (data.tipoDescuento !== undefined) updateData.tipo_descuento = data.tipoDescuento;
+  if (data.valor !== undefined) updateData.valor = data.valor;
+  if (data.fechaInicio !== undefined) updateData.fecha_inicio = new Date(data.fechaInicio);
+  if (data.fechaFin !== undefined) updateData.fecha_fin = data.fechaFin ? new Date(data.fechaFin) : null;
+  if (data.activo !== undefined) updateData.activo = data.activo;
+  if (data.aplicaCargoFijo !== undefined) updateData.aplica_cargo_fijo = data.aplicaCargoFijo;
+  if (data.aplicaConsumo !== undefined) updateData.aplica_consumo = data.aplicaConsumo;
+  if (data.consumoMinimo !== undefined) updateData.consumo_minimo = data.consumoMinimo;
+  if (data.consumoMaximo !== undefined) updateData.consumo_maximo = data.consumoMaximo;
+  updateData.fecha_actualizacion = new Date();
+
   const d = await prisma.descuentos.update({
     where: { id },
-    data: {
-      ...(data.nombre !== undefined && { nombre: data.nombre }),
-      ...(data.porcentaje !== undefined && { porcentaje: data.porcentaje }),
-      ...(data.fechaInicio !== undefined && { fecha_inicio: data.fechaInicio ? new Date(data.fechaInicio) : null }),
-      ...(data.fechaFin !== undefined && { fecha_fin: data.fechaFin ? new Date(data.fechaFin) : null }),
-      ...(data.descripcion !== undefined && { descripcion: data.descripcion }),
-      ...(data.estado !== undefined && { estado: data.estado }),
-    },
+    data: updateData,
   });
   await prisma.log_auditoria.create({
     data: { accion: 'EDITAR_DESCUENTO', entidad: 'descuentos', entidad_id: id, usuario_tipo: 'admin', usuario_email: adminEmail, datos_anteriores: transformDescuento(existing), datos_nuevos: transformDescuento(d) },
@@ -96,4 +117,3 @@ export async function getDescuentosByCliente(clienteId: bigint) {
     monto_aplicado: Number(a.monto_aplicado),
   }));
 }
-

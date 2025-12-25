@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { AdminLayout, PageHeader, DataTable, ConfirmDialog, PermissionGate } from '@/components/admin';
+import { AdminLayout, DataTable, PermissionGate } from '@/components/admin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import adminApi from '@/lib/adminApi';
-import { Plus, Pencil, Tag, Play } from 'lucide-react';
+import { Plus, Pencil, Tag, Play, Trash2 } from 'lucide-react';
 import { formatearPesos } from '@coab/utils';
 
 interface Descuento {
@@ -51,6 +51,7 @@ export default function AdminDescuentosPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<DescuentoFormData>(emptyForm);
   const [applyingToCliente, setApplyingToCliente] = useState<{ descuentoId: number; clienteId: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<Descuento | null>(null);
 
   const { data: descuentos, isLoading } = useQuery({
     queryKey: ['admin', 'descuentos'],
@@ -65,11 +66,11 @@ export default function AdminDescuentosPage() {
       return adminApi.post('/admin/descuentos', {
         nombre: data.nombre,
         descripcion: data.descripcion || null,
-        tipo: data.tipo,
+        tipoDescuento: data.tipo,
         valor: parseFloat(data.valor),
         activo: data.activo,
-        fecha_inicio: data.fecha_inicio || null,
-        fecha_fin: data.fecha_fin || null,
+        fechaInicio: data.fecha_inicio || new Date().toISOString().split('T')[0],
+        fechaFin: data.fecha_fin || null,
       });
     },
     onSuccess: () => {
@@ -87,11 +88,11 @@ export default function AdminDescuentosPage() {
       return adminApi.put(`/admin/descuentos/${id}`, {
         nombre: data.nombre,
         descripcion: data.descripcion || null,
-        tipo: data.tipo,
+        tipoDescuento: data.tipo,
         valor: parseFloat(data.valor),
         activo: data.activo,
-        fecha_inicio: data.fecha_inicio || null,
-        fecha_fin: data.fecha_fin || null,
+        fechaInicio: data.fecha_inicio || undefined,
+        fechaFin: data.fecha_fin || null,
       });
     },
     onSuccess: () => {
@@ -111,6 +112,7 @@ export default function AdminDescuentosPage() {
     onSuccess: () => {
       toast({ title: 'Descuento eliminado', description: 'El descuento se ha eliminado.' });
       queryClient.invalidateQueries({ queryKey: ['admin', 'descuentos'] });
+      setDeleteConfirm(null);
     },
     onError: () => {
       toast({ title: 'Error', description: 'No se pudo eliminar el descuento.', variant: 'destructive' });
@@ -166,7 +168,7 @@ export default function AdminDescuentosPage() {
   };
 
   const columns = [
-    { key: 'nombre', header: 'Nombre', sortable: true },
+    { key: 'nombre', header: 'Nombre' },
     {
       key: 'tipo',
       header: 'Tipo',
@@ -194,61 +196,82 @@ export default function AdminDescuentosPage() {
         </span>
       ),
     },
-    { key: 'descripcion', header: 'Descripción' },
-  ];
-
-  const actions = (descuento: Descuento) => (
-    <div className="flex gap-2">
-      <PermissionGate entity="descuentos" action="apply">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setApplyingToCliente({ descuentoId: descuento.id, clienteId: '' })}
-          disabled={!descuento.activo}
-        >
-          <Play className="h-4 w-4" />
-        </Button>
-      </PermissionGate>
-      <PermissionGate entity="descuentos" action="update">
-        <Button variant="outline" size="sm" onClick={() => openEdit(descuento)}>
-          <Pencil className="h-4 w-4" />
-        </Button>
-      </PermissionGate>
-      <PermissionGate entity="descuentos" action="delete">
-        <ConfirmDialog
-          title="¿Eliminar descuento?"
-          description={`Esta acción eliminará el descuento "${descuento.nombre}".`}
-          onConfirm={() => deleteMutation.mutate(descuento.id)}
-          variant="destructive"
-        />
-      </PermissionGate>
-    </div>
-  );
-
-  return (
-    <AdminLayout>
-      <PageHeader
-        title="Descuentos"
-        description="Gestiona los descuentos disponibles para aplicar a clientes."
-        icon={<Tag className="h-6 w-6" />}
-        action={
-          <PermissionGate entity="descuentos" action="create">
-            <Button onClick={openCreate}>
-              <Plus className="h-4 w-4 mr-2" />
-              Nuevo Descuento
+    {
+      key: 'acciones',
+      header: 'Acciones',
+      render: (descuento: Descuento) => (
+        <div className="flex gap-2">
+          <PermissionGate entity="descuentos" action="view">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => { e.stopPropagation(); setApplyingToCliente({ descuentoId: descuento.id, clienteId: '' }); }}
+              disabled={!descuento.activo}
+              title="Aplicar a cliente"
+            >
+              <Play className="h-4 w-4" />
             </Button>
           </PermissionGate>
-        }
-      />
+          <PermissionGate entity="descuentos" action="edit">
+            <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); openEdit(descuento); }} title="Editar">
+              <Pencil className="h-4 w-4" />
+            </Button>
+          </PermissionGate>
+          <PermissionGate entity="descuentos" action="delete">
+            <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setDeleteConfirm(descuento); }} title="Eliminar">
+              <Trash2 className="h-4 w-4 text-red-500" />
+            </Button>
+          </PermissionGate>
+        </div>
+      ),
+    },
+  ];
 
+  return (
+    <AdminLayout
+      title="Descuentos"
+      subtitle="Gestiona los descuentos disponibles para aplicar a clientes."
+      icon={<Tag className="h-5 w-5 text-blue-600" />}
+      actions={
+        <PermissionGate entity="descuentos" action="create">
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" />
+            Nuevo Descuento
+          </Button>
+        </PermissionGate>
+      }
+    >
       <DataTable
         data={descuentos || []}
         columns={columns}
         isLoading={isLoading}
         keyExtractor={(d) => d.id.toString()}
-        actions={actions}
         emptyMessage="No hay descuentos registrados."
       />
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Eliminar descuento?</DialogTitle>
+            <DialogDescription>
+              Esta acción eliminará el descuento &quot;{deleteConfirm?.nombre}&quot;. Esta acción no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteConfirm && deleteMutation.mutate(deleteConfirm.id)}
+              disabled={deleteMutation.isPending}
+            >
+              Eliminar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create/Edit Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
@@ -374,5 +397,3 @@ export default function AdminDescuentosPage() {
     </AdminLayout>
   );
 }
-
-

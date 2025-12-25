@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
   Users, CreditCard, FileText, Map, DollarSign, Percent, Gauge, FileSearch,
-  AlertTriangle, Tag, Scissors, RefreshCw, Settings, LogOut
+  AlertTriangle, Tag, Scissors, RefreshCw, LogOut
 } from 'lucide-react';
 import { getCurrentAdminUser, hasPermission, type AdminRole, type PermissionEntity } from '@/components/admin';
 
@@ -100,13 +100,6 @@ export default function AdminDashboardPage() {
       ],
     },
   ];
-
-  const getColorClasses = (color: string) => ({
-    bg: `bg-${color}-100`,
-    text: `text-${color}-600`,
-    border: `hover:border-${color}-200`,
-    section: `text-${color}-700`,
-  });
 
   // Custom color mapping for Tailwind (since dynamic classes don't work well)
   const colorMap: Record<string, { bg: string; text: string; border: string; section: string }> = {

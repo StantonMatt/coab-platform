@@ -44,7 +44,7 @@ interface DataTableProps<T> {
  *   pagination={{ page, totalPages, onPageChange: setPage }}
  * />
  */
-export function DataTable<T extends Record<string, unknown>>({
+export function DataTable<T extends object>({
   columns,
   data,
   keyExtractor,
@@ -113,7 +113,7 @@ export function DataTable<T extends Record<string, unknown>>({
                   >
                     {column.render
                       ? column.render(item, index)
-                      : (item[column.key] as ReactNode)}
+                      : ((item as Record<string, unknown>)[column.key] as ReactNode)}
                   </td>
                 ))}
               </tr>
@@ -161,8 +161,9 @@ export function DataTable<T extends Record<string, unknown>>({
 /**
  * Status badge for common estados
  */
-interface StatusBadgeProps {
+export interface StatusBadgeProps {
   status: string;
+  label?: string; // Custom label override
   statusMap?: Record<string, { label: string; className: string }>;
 }
 
@@ -178,12 +179,12 @@ const DEFAULT_STATUS_MAP: Record<string, { label: string; className: string }> =
   repuesto: { label: 'Repuesto', className: 'bg-emerald-100 text-emerald-700' },
 };
 
-export function StatusBadge({ status, statusMap = DEFAULT_STATUS_MAP }: StatusBadgeProps) {
+export function StatusBadge({ status, label, statusMap = DEFAULT_STATUS_MAP }: StatusBadgeProps) {
   const config = statusMap[status] || { label: status, className: 'bg-slate-100 text-slate-700' };
   
   return (
     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.className}`}>
-      {config.label}
+      {label || config.label}
     </span>
   );
 }

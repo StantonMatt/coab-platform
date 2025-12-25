@@ -76,8 +76,9 @@ interface DireccionesResponse {
 export default function RutasPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const canCreate = useCanAccess('rutas', 'create');
-  const canEdit = useCanAccess('rutas', 'update');
+  const _canCreate = useCanAccess('rutas', 'create');
+  void _canCreate; // For future use
+  const canEdit = useCanAccess('rutas', 'edit');
   const canDelete = useCanAccess('rutas', 'delete');
 
   const [page, setPage] = useState(1);

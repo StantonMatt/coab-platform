@@ -172,10 +172,12 @@ export async function getMedidorById(id: bigint) {
       : null,
     lecturas: medidor.lecturas.map((l) => ({
       id: l.id.toString(),
-      lectura: l.lectura,
-      consumo: l.consumo,
+      valorLectura: Number(l.valor_lectura),
       fecha: l.fecha_lectura,
-      estado: l.estado,
+      periodoAno: l.periodo_ano,
+      periodoMes: l.periodo_mes,
+      confirmada: l.confirmada,
+      advertencia: l.advertencia,
     })),
   };
 }

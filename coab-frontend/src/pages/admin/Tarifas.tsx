@@ -87,8 +87,9 @@ const initialFormData: TarifaFormData = {
 export default function TarifasPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const canCreate = useCanAccess('tarifas', 'create');
-  const canEdit = useCanAccess('tarifas', 'update');
+  const _canCreate = useCanAccess('tarifas', 'create');
+  void _canCreate; // For future use
+  const canEdit = useCanAccess('tarifas', 'edit');
   const canDelete = useCanAccess('tarifas', 'delete');
 
   const [page, setPage] = useState(1);

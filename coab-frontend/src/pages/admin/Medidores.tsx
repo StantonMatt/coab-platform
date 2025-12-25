@@ -26,7 +26,6 @@ import adminApiClient from '@/lib/adminApi';
 import {
   AdminLayout,
   DataTable,
-  StatusBadge,
   DeleteConfirmDialog,
   PermissionGate,
   useCanAccess,
@@ -103,7 +102,8 @@ export default function MedidoresPage() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const canCreate = useCanAccess('medidores', 'create');
+  const _canCreate = useCanAccess('medidores', 'create');
+  void _canCreate; // For future use
   const canEdit = useCanAccess('medidores', 'edit');
   const canDelete = useCanAccess('medidores', 'delete');
 

@@ -111,8 +111,9 @@ const initialFormData: SubsidioFormData = {
 export default function SubsidiosPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const canCreate = useCanAccess('subsidios', 'create');
-  const canEdit = useCanAccess('subsidios', 'update');
+  const _canCreate = useCanAccess('subsidios', 'create');
+  void _canCreate; // For future use
+  const canEdit = useCanAccess('subsidios', 'edit');
   const canDelete = useCanAccess('subsidios', 'delete');
 
   const [activeTab, setActiveTab] = useState('tipos');

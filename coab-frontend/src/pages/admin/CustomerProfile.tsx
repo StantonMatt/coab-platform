@@ -21,17 +21,14 @@ import {
   Calendar,
   AlertTriangle,
   Send,
-  Loader2,
   FileText,
   Gauge,
   FileSearch,
-  Tag,
-  Scissors,
   RefreshCw,
   Pencil,
 } from 'lucide-react';
 import PaymentModal from '@/components/admin/PaymentModal';
-import { ClienteEditModal, PermissionGate, StatusBadge } from '@/components/admin';
+import { ClienteEditModal, PermissionGate } from '@/components/admin';
 
 interface Customer {
   id: string;
@@ -248,8 +245,8 @@ export default function CustomerProfilePage() {
     enabled: !!id,
   });
 
-  // Fetch descuentos aplicados
-  const { data: descuentosData } = useQuery<{ descuentos: Descuento[] }>({
+  // Fetch descuentos aplicados (for future use)
+  const { data: _descuentosData } = useQuery<{ descuentos: Descuento[] }>({
     queryKey: ['admin-customer-descuentos', id],
     queryFn: async () => {
       const res = await adminApiClient.get(`/admin/clientes/${id}/descuentos`);
@@ -257,9 +254,10 @@ export default function CustomerProfilePage() {
     },
     enabled: !!id,
   });
+  void _descuentosData; // Suppress unused warning
 
-  // Fetch cortes
-  const { data: cortesData } = useQuery<{ cortes: CorteServicio[] }>({
+  // Fetch cortes (for future use)
+  const { data: _cortesData } = useQuery<{ cortes: CorteServicio[] }>({
     queryKey: ['admin-customer-cortes', id],
     queryFn: async () => {
       const res = await adminApiClient.get(`/admin/clientes/${id}/cortes`);
@@ -267,6 +265,7 @@ export default function CustomerProfilePage() {
     },
     enabled: !!id,
   });
+  void _cortesData; // Suppress unused warning
 
   // Fetch repactaciones
   const { data: repactacionesData } = useQuery<{ repactaciones: Repactacion[] }>({
@@ -541,7 +540,7 @@ export default function CustomerProfilePage() {
                   Registrar Pago
                 </Button>
 
-                <PermissionGate entity="clientes" action="update">
+                <PermissionGate entity="clientes" action="edit_contact">
                   <Button
                     variant="outline"
                     onClick={() => setEditModalOpen(true)}
@@ -1106,14 +1105,8 @@ export default function CustomerProfilePage() {
       {/* Edit Modal */}
       <ClienteEditModal
         open={editModalOpen}
-        onClose={() => setEditModalOpen(false)}
+        onOpenChange={setEditModalOpen}
         clienteId={id!}
-        clienteData={{
-          nombre: customer.nombre,
-          email: customer.email || '',
-          telefono: customer.telefono || '',
-          direccion: customer.direccion || '',
-        }}
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ['admin-customer', id] });
           setEditModalOpen(false);

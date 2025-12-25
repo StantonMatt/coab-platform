@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma.js';
+import { Prisma } from '@prisma/client';
 import { validarRUT, formatearRUT, limpiarRUT } from '@coab/utils';
 import type {
   UpdateClienteContactInput,
@@ -178,10 +179,10 @@ export async function updateClienteDireccion(
   const existingDireccion = cliente.direcciones[0];
   const datosAnteriores = existingDireccion
     ? {
-        direccion: existingDireccion.direccion,
-        ciudad: existingDireccion.ciudad,
+        direccion_calle: existingDireccion.direccion_calle,
+        direccion_numero: existingDireccion.direccion_numero,
+        poblacion: existingDireccion.poblacion,
         comuna: existingDireccion.comuna,
-        region: existingDireccion.region,
       }
     : null;
 
@@ -192,40 +193,30 @@ export async function updateClienteDireccion(
     direccion = await prisma.direcciones.update({
       where: { id: existingDireccion.id },
       data: {
-        direccion: data.direccion,
-        ciudad: data.ciudad || null,
-        comuna: data.comuna || null,
-        region: data.region || null,
+        direccion_calle: data.direccion || existingDireccion.direccion_calle,
+        direccion_numero: data.direccionNumero,
+        poblacion: data.poblacion || existingDireccion.poblacion,
+        comuna: data.comuna || existingDireccion.comuna,
       },
     });
   } else {
-    // Create new
-    direccion = await prisma.direcciones.create({
-      data: {
-        cliente_id: clienteId,
-        numero_cliente: cliente.numero_cliente,
-        direccion: data.direccion,
-        ciudad: data.ciudad || null,
-        comuna: data.comuna || null,
-        region: data.region || null,
-      },
-    });
+    throw new Error('No se puede crear dirección sin ruta asignada');
   }
 
   // Audit log
   await prisma.log_auditoria.create({
     data: {
-      accion: existingDireccion ? 'EDITAR_DIRECCION' : 'CREAR_DIRECCION',
+      accion: 'EDITAR_DIRECCION',
       entidad: 'direcciones',
       entidad_id: direccion.id,
       usuario_tipo: 'admin',
       usuario_email: adminEmail,
-      datos_anteriores: datosAnteriores,
+      datos_anteriores: datosAnteriores ?? Prisma.JsonNull,
       datos_nuevos: {
-        direccion: direccion.direccion,
-        ciudad: direccion.ciudad,
+        direccion_calle: direccion.direccion_calle,
+        direccion_numero: direccion.direccion_numero,
+        poblacion: direccion.poblacion,
         comuna: direccion.comuna,
-        region: direccion.region,
       },
     },
   });
@@ -267,10 +258,10 @@ export async function getClienteForEdit(id: bigint) {
     direccion: direccion
       ? {
           id: direccion.id.toString(),
-          direccion: direccion.direccion,
-          ciudad: direccion.ciudad,
+          direccionCalle: direccion.direccion_calle,
+          direccionNumero: direccion.direccion_numero,
+          poblacion: direccion.poblacion,
           comuna: direccion.comuna,
-          region: direccion.region,
         }
       : null,
   };

@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import { ZodError } from 'zod';
+import prisma from '../lib/prisma.js';
 import * as adminService from '../services/admin.service.js';
 import * as twilioService from '../services/twilio.service.js';
 import * as autopagoService from '../services/autopago.service.js';
@@ -1153,7 +1154,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
    */
   fastify.post(
     '/rutas/:id/direcciones/reasignar',
-    { preHandler: requirePermission('rutas', 'update') },
+    { preHandler: requirePermission('rutas', 'edit') },
     async (request, reply) => {
       try {
         const params = rutaIdSchema.parse(request.params);
@@ -2601,7 +2602,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/cortes/:id/reposicion', { preHandler: requirePermission('cortes_servicio', 'authorize_reposicion') }, async (request, reply) => {
     try {
       const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
-      return await cortesService.authorizarReposicion(BigInt(id), request.user!.email!);
+      return await cortesService.autorizarReposicion(BigInt(id), request.user!.email!);
     } catch (error: any) {
       if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
       if (error.message?.includes('ya fue')) return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });

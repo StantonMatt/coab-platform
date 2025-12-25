@@ -40,12 +40,13 @@ export const updateClienteFullSchema = z.object({
 
 /**
  * Schema for updating client's primary address
+ * Matches direcciones table schema
  */
 export const updateDireccionSchema = z.object({
-  direccion: z.string().min(1, 'Dirección requerida').max(200),
-  ciudad: z.string().max(100).optional().nullable(),
-  comuna: z.string().max(100).optional().nullable(),
-  region: z.string().max(100).optional().nullable(),
+  direccion: z.string().min(1, 'Dirección requerida').max(200).optional(),
+  direccionNumero: z.string().max(20).optional().nullable(),
+  poblacion: z.string().max(100).optional(),
+  comuna: z.string().max(100).optional(),
 });
 
 /**

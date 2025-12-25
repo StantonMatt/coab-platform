@@ -233,7 +233,8 @@ export async function generateBoletaPDF(boletaId: bigint): Promise<Buffer | null
   });
 
   // Render to buffer
-  const pdfBuffer = await renderToBuffer(element);
+  // Type assertion needed because BoletaTemplate returns Document but TypeScript doesn't infer this
+  const pdfBuffer = await renderToBuffer(element as React.ReactElement);
   
   return Buffer.from(pdfBuffer);
 }

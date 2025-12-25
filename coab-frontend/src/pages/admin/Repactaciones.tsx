@@ -91,7 +91,8 @@ const emptyForm: RepactacionFormData = {
 export default function AdminRepactacionesPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const canCreate = useCanAccess('repactaciones', 'create');
+  const _canCreate = useCanAccess('repactaciones', 'create');
+  void _canCreate; // For future use
 
   const [activeTab, setActiveTab] = useState('repactaciones');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -395,7 +396,7 @@ export default function AdminRepactacionesPage() {
         <div className="flex justify-end gap-1">
           {s.estado === 'pendiente' && (
             <>
-              <PermissionGate entity="repactaciones" action="approve">
+              <PermissionGate entity="solicitudes_repactacion" action="approve_request">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -408,7 +409,7 @@ export default function AdminRepactacionesPage() {
                   <Check className="h-4 w-4" />
                 </Button>
               </PermissionGate>
-              <PermissionGate entity="repactaciones" action="reject">
+              <PermissionGate entity="solicitudes_repactacion" action="approve_request">
                 <Button
                   variant="ghost"
                   size="sm"

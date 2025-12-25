@@ -275,23 +275,20 @@ export default function BatchPDFPage() {
   // Generate single PDF mutation
   const generateSingleMutation = useMutation({
     mutationFn: async (boletaId: string) => {
-      await adminApiClient.post(`/admin/boletas/${boletaId}/regenerar-pdf`);
-      // Fetch updated boleta info
-      const res = await adminApiClient.get(
-        `/admin/clientes/buscar-boleta?q=${encodeURIComponent(debouncedQuery)}&periodo=${selectedMonth}`
-      );
-      return res.data as ClientBoletaResult;
+      const response = await adminApiClient.post<{ pdfUrl?: string }>(`/admin/boletas/${boletaId}/regenerar-pdf`);
+      // Invalidate queries to refresh the data
+      queryClient.invalidateQueries({ queryKey: ['client-boleta-search'] });
+      queryClient.invalidateQueries({ queryKey: ['period-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['available-periods'] });
+      return response.data;
     },
     onSuccess: (data) => {
       toast({
         title: 'PDF generado',
         description: 'El PDF se generó exitosamente',
       });
-      queryClient.invalidateQueries({ queryKey: ['client-boleta-search'] });
-      queryClient.invalidateQueries({ queryKey: ['period-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['available-periods'] });
-      // Open the PDF
-      if (data.pdfUrl) {
+      // Open the PDF if URL is returned
+      if (data?.pdfUrl) {
         window.open(data.pdfUrl, '_blank');
       }
     },
@@ -310,7 +307,6 @@ export default function BatchPDFPage() {
   const hasError = jobStatus?.estado === 'error';
   const isCancelled = jobStatus?.estado === 'cancelado';
   const hasJob = !!currentJobId;
-  const jobFinished = isComplete || hasError || isCancelled;
 
   // Determine if we can generate
   const canGenerate = periodStats && periodStats.total > 0 && (regenerate || periodStats.sinPdf > 0);
