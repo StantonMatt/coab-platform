@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { AlertTriangle, Plus, Pencil, XCircle, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { AlertTriangle, Plus, Pencil, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
 import { formatearPesos } from '@coab/utils';
-import { AdminLayout, DataTable, ConfirmDialog, PermissionGate, useCanAccess } from '@/components/admin';
+import { AdminLayout, DataTable, ConfirmDialog, PermissionGate, useCanAccess, SortableHeader, useSortState } from '@/components/admin';
 
 interface Multa {
   id: string;
@@ -50,13 +50,14 @@ export default function MultasPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingMulta, setEditingMulta] = useState<Multa | null>(null);
   const [cancelMulta, setCancelMulta] = useState<Multa | null>(null);
-
-  // Sort state - default to client number ascending
-  const [sortBy, setSortBy] = useState<string>('numeroCliente');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-
-  // Detail modal state
   const [selectedMulta, setSelectedMulta] = useState<Multa | null>(null);
+
+  // Use the sort hook
+  const { sortBy, sortDirection, handleSort } = useSortState({
+    defaultColumn: 'numeroCliente',
+    defaultDirection: 'asc',
+    onSortChange: () => setPage(1),
+  });
 
   const [clienteId, setClienteId] = useState('');
   const [monto, setMonto] = useState('');
@@ -66,12 +67,11 @@ export default function MultasPage() {
   const { data, isLoading } = useQuery<MultasResponse>({
     queryKey: ['admin-multas', page, sortBy, sortDirection],
     queryFn: async () => {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: '20',
-        sortBy,
-        sortDirection,
-      });
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', '20');
+      if (sortBy) params.append('sortBy', sortBy);
+      params.append('sortDirection', sortDirection);
       const res = await adminApiClient.get<MultasResponse>(`/admin/multas?${params}`);
       return res.data;
     },
@@ -138,39 +138,6 @@ export default function MultasPage() {
     } else {
       createMutation.mutate(payload);
     }
-  };
-
-  // Toggle sort on column click
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('asc');
-    }
-    setPage(1); // Reset to first page on sort change
-  };
-
-  // Sortable header component
-  const SortableHeader = ({ column, label }: { column: string; label: string }) => {
-    const isActive = sortBy === column;
-    return (
-      <button
-        onClick={() => handleSort(column)}
-        className="flex items-center gap-1 hover:text-slate-900 transition-colors group"
-      >
-        {label}
-        {isActive ? (
-          sortDirection === 'asc' ? (
-            <ArrowUp className="h-3.5 w-3.5 text-blue-600" />
-          ) : (
-            <ArrowDown className="h-3.5 w-3.5 text-blue-600" />
-          )
-        ) : (
-          <ArrowUpDown className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-        )}
-      </button>
-    );
   };
 
   // Format periodo as month name and year
@@ -262,6 +229,7 @@ export default function MultasPage() {
             onPageChange: setPage,
           }
         }
+        sorting={{ sortBy, sortDirection, onSort: handleSort }}
       />
 
       {/* Detail Modal */}
