@@ -174,7 +174,7 @@ export default function SubsidiosPage() {
     queryKey: ['admin-subsidios-activos'],
     queryFn: async () => {
       const res = await adminApiClient.get('/admin/subsidios/activos');
-      return res.data;
+      return res.data.subsidios;
     },
   });
 
