@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { AdminLayout, DataTable, StatusBadge, PermissionGate, SortableHeader, useCanAccess } from '@/components/admin';
+import { AdminLayout, DataTable, StatusBadge, PermissionGate, SortableHeader, useSortState, useCanAccess } from '@/components/admin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -58,29 +58,19 @@ export default function AdminDescuentosPage() {
   const [formData, setFormData] = useState<DescuentoFormData>(emptyForm);
   const [applyingToCliente, setApplyingToCliente] = useState<{ descuentoId: number; clienteId: string } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<Descuento | null>(null);
-
-  // Sort state
-  const [sortBy, setSortBy] = useState<string>('nombre');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-
-  // Detail modal state
   const [selectedDescuento, setSelectedDescuento] = useState<Descuento | null>(null);
 
-  // Sort handler
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('asc');
-    }
-  };
+  // Use the sort hook - much cleaner!
+  const { sortBy, sortDirection, handleSort } = useSortState({
+    defaultColumn: 'nombre',
+    defaultDirection: 'asc',
+  });
 
   const { data: descuentos, isLoading } = useQuery({
     queryKey: ['admin', 'descuentos', sortBy, sortDirection],
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.append('sortBy', sortBy);
+      if (sortBy) params.append('sortBy', sortBy);
       params.append('sortDirection', sortDirection);
       const res = await adminApi.get(`/admin/descuentos?${params}`);
       return res.data.descuentos as Descuento[];
@@ -195,31 +185,16 @@ export default function AdminDescuentosPage() {
     }
   };
 
+  // Columns use SortableHeader with just column and label - context provides the rest!
   const columns = [
     {
       key: 'nombre',
-      header: (
-        <SortableHeader
-          column="nombre"
-          label="Nombre"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="nombre" label="Nombre" />,
       render: (d: Descuento) => <span className="font-medium text-slate-900">{d.nombre}</span>,
     },
     {
       key: 'tipo',
-      header: (
-        <SortableHeader
-          column="tipo"
-          label="Tipo"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="tipo" label="Tipo" />,
       render: (d: Descuento) => (
         <span className={`px-2 py-1 text-xs rounded-full ${d.tipo === 'porcentaje' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
           {d.tipo === 'porcentaje' ? 'Porcentaje' : 'Monto Fijo'}
@@ -228,15 +203,7 @@ export default function AdminDescuentosPage() {
     },
     {
       key: 'valor',
-      header: (
-        <SortableHeader
-          column="valor"
-          label="Valor"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="valor" label="Valor" />,
       render: (d: Descuento) => (
         <span className="font-medium">
           {d.tipo === 'porcentaje' ? `${d.valor}%` : formatearPesos(d.valor)}
@@ -284,6 +251,7 @@ export default function AdminDescuentosPage() {
         </PermissionGate>
       }
     >
+      {/* DataTable with sorting prop - provides context to SortableHeader */}
       <DataTable
         data={descuentos || []}
         columns={columns}
@@ -292,6 +260,7 @@ export default function AdminDescuentosPage() {
         emptyMessage="No hay descuentos registrados."
         emptyIcon={<Tag className="h-12 w-12 text-slate-300" />}
         onRowClick={(d) => setSelectedDescuento(d)}
+        sorting={{ sortBy, sortDirection, onSort: handleSort }}
       />
 
       {/* Detail Modal */}
@@ -372,9 +341,7 @@ export default function AdminDescuentosPage() {
                 {canDelete && (
                   <Button
                     variant="outline"
-                    onClick={() => {
-                      setDeleteConfirm(selectedDescuento);
-                    }}
+                    onClick={() => setDeleteConfirm(selectedDescuento)}
                     className="text-red-600 hover:text-red-700"
                   >
                     <Trash2 className="h-4 w-4 mr-2" />

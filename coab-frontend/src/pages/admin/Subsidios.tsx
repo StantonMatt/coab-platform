@@ -31,6 +31,7 @@ import {
   DeleteConfirmDialog,
   PermissionGate,
   SortableHeader,
+  useSortState,
   useCanAccess,
 } from '@/components/admin';
 
@@ -127,35 +128,23 @@ export default function SubsidiosPage() {
   const [selectedSubsidio, setSelectedSubsidio] = useState<Subsidio | null>(null);
   const [selectedHistorial, setSelectedHistorial] = useState<HistorialEntry | null>(null);
 
-  // Sort state for subsidios
-  const [sortBy, setSortBy] = useState<string>('porcentaje');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  // Use the sort hook for subsidios
+  const { sortBy, sortDirection, handleSort } = useSortState({
+    defaultColumn: 'porcentaje',
+    defaultDirection: 'desc',
+    onSortChange: () => setPage(1),
+  });
 
-  // Sort state for historial
-  const [historialSortBy, setHistorialSortBy] = useState<string>('fechaCambio');
-  const [historialSortDirection, setHistorialSortDirection] = useState<'asc' | 'desc'>('desc');
-
-  // Sort handler for subsidios
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('desc');
-    }
-    setPage(1);
-  };
-
-  // Sort handler for historial
-  const handleHistorialSort = (column: string) => {
-    if (historialSortBy === column) {
-      setHistorialSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setHistorialSortBy(column);
-      setHistorialSortDirection('desc');
-    }
-    setHistorialPage(1);
-  };
+  // Use the sort hook for historial
+  const {
+    sortBy: historialSortBy,
+    sortDirection: historialSortDirection,
+    handleSort: handleHistorialSort,
+  } = useSortState({
+    defaultColumn: 'fechaCambio',
+    defaultDirection: 'desc',
+    onSortChange: () => setHistorialPage(1),
+  });
 
   // Assign modal state
   const [showAssign, setShowAssign] = useState(false);
@@ -174,7 +163,7 @@ export default function SubsidiosPage() {
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('limit', '20');
-      params.append('sortBy', sortBy);
+      if (sortBy) params.append('sortBy', sortBy);
       params.append('sortDirection', sortDirection);
       const res = await adminApiClient.get<SubsidiosResponse>(`/admin/subsidios?${params}`);
       return res.data;
@@ -191,7 +180,7 @@ export default function SubsidiosPage() {
       params.append('limit', '20');
       if (historialSearch) params.append('search', historialSearch);
       if (historialFilter) params.append('tipoCambio', historialFilter);
-      params.append('sortBy', historialSortBy);
+      if (historialSortBy) params.append('sortBy', historialSortBy);
       params.append('sortDirection', historialSortDirection);
       const res = await adminApiClient.get<HistorialResponse>(`/admin/subsidio-historial?${params}`);
       return res.data;
@@ -392,33 +381,18 @@ export default function SubsidiosPage() {
     }
   };
 
+  // Columns use SortableHeader with just column and label - context provides the rest!
   const subsidiosColumns = [
     {
       key: 'id',
-      header: (
-        <SortableHeader
-          column="id"
-          label="ID"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="id" label="ID" />,
       render: (subsidio: Subsidio) => (
         <span className="font-medium text-slate-900">{subsidio.id}</span>
       ),
     },
     {
       key: 'porcentaje',
-      header: (
-        <SortableHeader
-          column="porcentaje"
-          label="Descuento"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="porcentaje" label="Descuento" />,
       render: (subsidio: Subsidio) => (
         <div className="flex items-center gap-2">
           <span className="font-bold text-emerald-600">{subsidio.porcentaje}%</span>
@@ -433,30 +407,14 @@ export default function SubsidiosPage() {
     },
     {
       key: 'limiteM3',
-      header: (
-        <SortableHeader
-          column="limiteM3"
-          label="Límite m³"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="limiteM3" label="Límite m³" />,
       render: (subsidio: Subsidio) => (
         <span className="text-slate-700">{subsidio.limiteM3} m³</span>
       ),
     },
     {
       key: 'historial',
-      header: (
-        <SortableHeader
-          column="cantidadHistorial"
-          label="Clientes"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="cantidadHistorial" label="Clientes" />,
       className: 'hidden sm:table-cell',
       headerClassName: 'hidden sm:table-cell',
       render: (subsidio: Subsidio) => (
@@ -474,6 +432,7 @@ export default function SubsidiosPage() {
     },
   ];
 
+  // Historial columns - these need explicit props since they're in a different table with different sort state
   const historialColumns = [
     {
       key: 'cliente',
@@ -592,6 +551,7 @@ export default function SubsidiosPage() {
                 onPageChange: setPage,
               }
             }
+            sorting={{ sortBy, sortDirection, onSort: handleSort }}
           />
         </TabsContent>
 

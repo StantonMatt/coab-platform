@@ -30,6 +30,7 @@ import {
   DeleteConfirmDialog,
   PermissionGate,
   SortableHeader,
+  useSortState,
   useCanAccess,
 } from '@/components/admin';
 
@@ -86,20 +87,12 @@ export default function RutasPage() {
   const [deleteRuta, setDeleteRuta] = useState<Ruta | null>(null);
   const [selectedRuta, setSelectedRuta] = useState<Ruta | null>(null);
 
-  // Sort state
-  const [sortBy, setSortBy] = useState<string>('nombre');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-
-  // Sort handler
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('asc');
-    }
-    setPage(1);
-  };
+  // Use the sort hook
+  const { sortBy, sortDirection, handleSort } = useSortState({
+    defaultColumn: 'nombre',
+    defaultDirection: 'asc',
+    onSortChange: () => setPage(1),
+  });
 
   // Form state
   const [nombre, setNombre] = useState('');
@@ -118,7 +111,7 @@ export default function RutasPage() {
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('limit', '20');
-      params.append('sortBy', sortBy);
+      if (sortBy) params.append('sortBy', sortBy);
       params.append('sortDirection', sortDirection);
       const res = await adminApiClient.get<RutasResponse>(`/admin/rutas?${params}`);
       return res.data;
@@ -306,18 +299,11 @@ export default function RutasPage() {
     });
   };
 
+  // Columns use SortableHeader with just column and label - context provides the rest!
   const columns = [
     {
       key: 'nombre',
-      header: (
-        <SortableHeader
-          column="nombre"
-          label="Nombre"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="nombre" label="Nombre" />,
       render: (ruta: Ruta) => (
         <span className="font-medium text-slate-900">{ruta.nombre}</span>
       ),
@@ -335,15 +321,7 @@ export default function RutasPage() {
     },
     {
       key: 'cantidadDirecciones',
-      header: (
-        <SortableHeader
-          column="cantidadDirecciones"
-          label="Direcciones"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="cantidadDirecciones" label="Direcciones" />,
       render: (ruta: Ruta) => (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
           {ruta.cantidadDirecciones}
@@ -352,15 +330,7 @@ export default function RutasPage() {
     },
     {
       key: 'fechaActualizacion',
-      header: (
-        <SortableHeader
-          column="fechaActualizacion"
-          label="Última Actualización"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="fechaActualizacion" label="Última Actualización" />,
       className: 'hidden lg:table-cell',
       headerClassName: 'hidden lg:table-cell',
       render: (ruta: Ruta) => (
@@ -404,6 +374,7 @@ export default function RutasPage() {
             onPageChange: setPage,
           }
         }
+        sorting={{ sortBy, sortDirection, onSort: handleSort }}
       />
 
       {/* Detail/Direcciones Modal */}

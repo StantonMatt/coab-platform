@@ -4,7 +4,15 @@ export { AdminLayout, PageHeader, useAdminUser } from './AdminLayout';
 export { ClienteEditModal } from './ClienteEditModal';
 export { ConfirmDialog, DeleteConfirmDialog } from './ConfirmDialog';
 export { DataTable, StatusBadge } from './DataTable';
-export { SortableHeader } from './SortableHeader';
+export { 
+  SortableHeader, 
+  useSortState, 
+  SortProvider, 
+  useSortContext,
+  type SortState,
+  type UseSortStateOptions,
+  type UseSortStateReturn,
+} from './SortableHeader';
 export {
   PermissionGate,
   useCanAccess,
@@ -17,4 +25,3 @@ export {
   type PermissionAction,
   type PermissionEntity,
 } from './PermissionGate';
-

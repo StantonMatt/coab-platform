@@ -21,6 +21,7 @@ import {
   DeleteConfirmDialog,
   PermissionGate,
   SortableHeader,
+  useSortState,
   useCanAccess,
 } from '@/components/admin';
 
@@ -97,20 +98,12 @@ export default function TarifasPage() {
   const [deleteTarifa, setDeleteTarifa] = useState<Tarifa | null>(null);
   const [formData, setFormData] = useState<TarifaFormData>(initialFormData);
 
-  // Sort state
-  const [sortBy, setSortBy] = useState<string>('fechaInicio');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-
-  // Sort handler
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('desc');
-    }
-    setPage(1);
-  };
+  // Use the sort hook
+  const { sortBy, sortDirection, handleSort } = useSortState({
+    defaultColumn: 'fechaInicio',
+    defaultDirection: 'desc',
+    onSortChange: () => setPage(1),
+  });
 
   // Fetch tarifas
   const { data, isLoading } = useQuery<TarifasResponse>({
@@ -119,7 +112,7 @@ export default function TarifasPage() {
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('limit', '20');
-      params.append('sortBy', sortBy);
+      if (sortBy) params.append('sortBy', sortBy);
       params.append('sortDirection', sortDirection);
       const res = await adminApiClient.get<TarifasResponse>(`/admin/tarifas?${params}`);
       return res.data;
@@ -257,18 +250,11 @@ export default function TarifasPage() {
     }
   };
 
+  // Columns use SortableHeader with just column and label - context provides the rest!
   const columns = [
     {
       key: 'fechas',
-      header: (
-        <SortableHeader
-          column="fechaInicio"
-          label="Vigencia"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="fechaInicio" label="Vigencia" />,
       render: (tarifa: Tarifa) => (
         <div>
           <div className="flex items-center gap-2">
@@ -292,15 +278,7 @@ export default function TarifasPage() {
     },
     {
       key: 'costoM3Agua',
-      header: (
-        <SortableHeader
-          column="costoM3Agua"
-          label="Agua/m³"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="costoM3Agua" label="Agua/m³" />,
       className: 'hidden sm:table-cell',
       headerClassName: 'hidden sm:table-cell',
       render: (tarifa: Tarifa) => (
@@ -322,15 +300,7 @@ export default function TarifasPage() {
     },
     {
       key: 'cargoFijo',
-      header: (
-        <SortableHeader
-          column="cargoFijo"
-          label="Cargo Fijo"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="cargoFijo" label="Cargo Fijo" />,
       className: 'hidden md:table-cell',
       headerClassName: 'hidden md:table-cell',
       render: (tarifa: Tarifa) => (
@@ -378,6 +348,7 @@ export default function TarifasPage() {
             onPageChange: setPage,
           }
         }
+        sorting={{ sortBy, sortDirection, onSort: handleSort }}
       />
 
       {/* Detail Modal */}

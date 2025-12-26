@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { SortProvider } from './SortableHeader';
 
 interface Column<T> {
   key: string;
@@ -27,12 +28,19 @@ interface DataTableProps<T> {
     total?: number;
     onPageChange: (page: number) => void;
   };
+  // Sorting - if provided, wraps table in SortProvider for SortableHeader to use
+  sorting?: {
+    sortBy: string | null;
+    sortDirection: 'asc' | 'desc';
+    onSort: (column: string) => void;
+  };
 }
 
 /**
- * Reusable data table component with pagination
+ * Reusable data table component with pagination and optional sorting context.
  * 
  * @example
+ * // Basic usage:
  * <DataTable
  *   columns={[
  *     { key: 'nombre', header: 'Nombre' },
@@ -42,6 +50,19 @@ interface DataTableProps<T> {
  *   keyExtractor={(item) => item.id}
  *   onRowClick={(item) => navigate(`/admin/items/${item.id}`)}
  *   pagination={{ page, totalPages, onPageChange: setPage }}
+ * />
+ * 
+ * @example
+ * // With sorting (SortableHeader in columns will auto-receive sort state):
+ * const { sortBy, sortDirection, handleSort } = useSortState({ defaultColumn: 'nombre' });
+ * 
+ * <DataTable
+ *   columns={[
+ *     { key: 'nombre', header: <SortableHeader column="nombre" label="Nombre" /> },
+ *   ]}
+ *   data={items}
+ *   keyExtractor={(item) => item.id}
+ *   sorting={{ sortBy, sortDirection, onSort: handleSort }}
  * />
  */
 export function DataTable<T extends object>({
@@ -54,6 +75,7 @@ export function DataTable<T extends object>({
   onRowClick,
   rowClassName,
   pagination,
+  sorting,
 }: DataTableProps<T>) {
   if (isLoading) {
     return (
@@ -79,7 +101,7 @@ export function DataTable<T extends object>({
     );
   }
 
-  return (
+  const tableContent = (
     <Card className="border-slate-200 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full">
@@ -156,6 +178,21 @@ export function DataTable<T extends object>({
       )}
     </Card>
   );
+
+  // Wrap in SortProvider if sorting props are provided
+  if (sorting) {
+    return (
+      <SortProvider
+        sortBy={sorting.sortBy}
+        sortDirection={sorting.sortDirection}
+        onSort={sorting.onSort}
+      >
+        {tableContent}
+      </SortProvider>
+    );
+  }
+
+  return tableContent;
 }
 
 /**
@@ -188,5 +225,3 @@ export function StatusBadge({ status, label, statusMap = DEFAULT_STATUS_MAP }: S
     </span>
   );
 }
-
-
