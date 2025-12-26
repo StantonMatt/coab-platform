@@ -149,12 +149,12 @@ export default function MultasPage() {
   };
 
   // Sortable header component
-  const SortableHeader = ({ column, label }: { column: string; label: string }) => {
+  const SortableHeader = ({ column, label, align = 'left' }: { column: string; label: string; align?: 'left' | 'right' }) => {
     const isActive = sortBy === column;
     return (
       <button
         onClick={() => handleSort(column)}
-        className="flex items-center gap-1 hover:text-slate-900 transition-colors group"
+        className={`flex items-center gap-1 hover:text-slate-900 transition-colors group ${align === 'right' ? 'justify-end w-full' : ''}`}
       >
         {label}
         {isActive ? (
@@ -194,7 +194,7 @@ export default function MultasPage() {
     },
     {
       key: 'monto',
-      header: <SortableHeader column="monto" label="Monto" />,
+      header: <SortableHeader column="monto" label="Monto" align="right" />,
       className: 'text-right',
       headerClassName: 'text-right',
       render: (m: Multa) => <span className="font-medium text-red-600">{formatearPesos(m.monto)}</span>,
