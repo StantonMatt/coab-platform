@@ -2406,8 +2406,18 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         page: z.coerce.number().int().min(1).default(1),
         limit: z.coerce.number().int().min(1).max(100).default(50),
         estado: z.string().optional(),
+        search: z.string().optional(),
+        sortBy: z.enum(['numeroCliente', 'monto', 'periodo', 'fechaCreacion']).optional(),
+        sortDirection: z.enum(['asc', 'desc']).optional(),
       }).parse(request.query);
-      const result = await multasService.getAllMultas(query.page, query.limit, query.estado);
+      const result = await multasService.getAllMultas({
+        page: query.page,
+        limit: query.limit,
+        estado: query.estado,
+        search: query.search,
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
+      });
       return result;
     } catch (error: any) {
       fastify.log.error(error, 'Error al obtener multas');

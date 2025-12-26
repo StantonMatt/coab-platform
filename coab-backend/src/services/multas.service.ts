@@ -1,8 +1,13 @@
 import prisma from '../lib/prisma.js';
 
 function transformMulta(multa: any) {
-  // Estado is derived from cancelada_por field
-  const estado = multa.cancelada_por ? 'cancelada' : 'activa';
+  // Estado priority: cancelada > aplicada > pendiente
+  let estado = 'pendiente';
+  if (multa.cancelada_por) {
+    estado = 'cancelada';
+  } else if (multa.boleta_aplicada_id) {
+    estado = 'aplicada';
+  }
 
   return {
     id: multa.id.toString(),
@@ -30,19 +35,34 @@ function transformMulta(multa: any) {
   };
 }
 
-export async function getAllMultas(
-  page: number = 1,
-  limit: number = 50,
-  estado?: string,
-  search?: string
-) {
+export async function getAllMultas(options: {
+  page?: number;
+  limit?: number;
+  estado?: string;
+  search?: string;
+  sortBy?: string;
+  sortDirection?: 'asc' | 'desc';
+}) {
+  const {
+    page = 1,
+    limit = 50,
+    estado,
+    search,
+    sortBy = 'numeroCliente',
+    sortDirection = 'asc',
+  } = options;
+
   const skip = (page - 1) * limit;
 
   const where: any = {};
 
   // Filter by estado (derived field)
-  if (estado === 'activa') {
+  if (estado === 'pendiente') {
     where.cancelada_por = null;
+    where.boleta_aplicada_id = null;
+  } else if (estado === 'aplicada') {
+    where.cancelada_por = null;
+    where.boleta_aplicada_id = { not: null };
   } else if (estado === 'cancelada') {
     where.cancelada_por = { not: null };
   }
@@ -63,10 +83,29 @@ export async function getAllMultas(
     ];
   }
 
+  // Build orderBy based on sortBy parameter
+  let orderBy: any;
+  switch (sortBy) {
+    case 'numeroCliente':
+      orderBy = { cliente: { numero_cliente: sortDirection } };
+      break;
+    case 'monto':
+      orderBy = { monto: sortDirection };
+      break;
+    case 'periodo':
+      orderBy = { periodo_desde: sortDirection };
+      break;
+    case 'fechaCreacion':
+      orderBy = { created_at: sortDirection };
+      break;
+    default:
+      orderBy = { cliente: { numero_cliente: 'asc' } };
+  }
+
   const [multas, total] = await Promise.all([
     prisma.multas.findMany({
       where,
-      orderBy: { created_at: 'desc' },
+      orderBy,
       skip,
       take: limit,
       include: {
