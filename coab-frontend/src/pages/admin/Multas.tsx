@@ -149,12 +149,12 @@ export default function MultasPage() {
   };
 
   // Sortable header component
-  const SortableHeader = ({ column, label, align = 'left' }: { column: string; label: string; align?: 'left' | 'right' }) => {
+  const SortableHeader = ({ column, label }: { column: string; label: string }) => {
     const isActive = sortBy === column;
     return (
       <button
         onClick={() => handleSort(column)}
-        className={`flex items-center gap-1 hover:text-slate-900 transition-colors group ${align === 'right' ? 'justify-end w-full' : ''}`}
+        className="flex items-center gap-1 hover:text-slate-900 transition-colors group"
       >
         {label}
         {isActive ? (
@@ -194,16 +194,12 @@ export default function MultasPage() {
     },
     {
       key: 'monto',
-      header: <SortableHeader column="monto" label="Monto" align="right" />,
-      className: 'text-right',
-      headerClassName: 'text-right',
+      header: <SortableHeader column="monto" label="Monto" />,
       render: (m: Multa) => <span className="font-medium text-red-600">{formatearPesos(m.monto)}</span>,
     },
     {
       key: 'motivo',
       header: 'Motivo',
-      className: 'hidden md:table-cell',
-      headerClassName: 'hidden md:table-cell',
       render: (m: Multa) => (
         <span className="text-sm text-slate-600 truncate max-w-xs block" title={m.motivo}>
           {m.motivo}
@@ -213,8 +209,6 @@ export default function MultasPage() {
     {
       key: 'periodo',
       header: <SortableHeader column="periodo" label="Periodo" />,
-      className: 'hidden lg:table-cell',
-      headerClassName: 'hidden lg:table-cell',
       render: (m: Multa) => (
         <span className="text-sm text-slate-600 capitalize">
           {formatPeriodo(m.periodoDesde)}
@@ -236,10 +230,8 @@ export default function MultasPage() {
     {
       key: 'acciones',
       header: '',
-      className: 'text-right',
-      headerClassName: 'text-right',
       render: (m: Multa) => (
-        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
           {canEdit && m.estado !== 'cancelada' && (
             <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(m)}>
               <Pencil className="h-4 w-4" />
