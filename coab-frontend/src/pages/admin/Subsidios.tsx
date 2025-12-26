@@ -112,8 +112,6 @@ const initialFormData: SubsidioFormData = {
 export default function SubsidiosPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const _canCreate = useCanAccess('subsidios', 'create');
-  void _canCreate; // For future use
   const canEdit = useCanAccess('subsidios', 'edit');
   const canDelete = useCanAccess('subsidios', 'delete');
 
@@ -126,12 +124,18 @@ export default function SubsidiosPage() {
   const [editingSubsidio, setEditingSubsidio] = useState<Subsidio | null>(null);
   const [deleteSubsidio, setDeleteSubsidio] = useState<Subsidio | null>(null);
   const [formData, setFormData] = useState<SubsidioFormData>(initialFormData);
+  const [selectedSubsidio, setSelectedSubsidio] = useState<Subsidio | null>(null);
+  const [selectedHistorial, setSelectedHistorial] = useState<HistorialEntry | null>(null);
 
-  // Sort state
-  const [sortBy, setSortBy] = useState<string>('fechaInicio');
+  // Sort state for subsidios
+  const [sortBy, setSortBy] = useState<string>('porcentaje');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  // Sort handler
+  // Sort state for historial
+  const [historialSortBy, setHistorialSortBy] = useState<string>('fechaCambio');
+  const [historialSortDirection, setHistorialSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Sort handler for subsidios
   const handleSort = (column: string) => {
     if (sortBy === column) {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -140,6 +144,17 @@ export default function SubsidiosPage() {
       setSortDirection('desc');
     }
     setPage(1);
+  };
+
+  // Sort handler for historial
+  const handleHistorialSort = (column: string) => {
+    if (historialSortBy === column) {
+      setHistorialSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setHistorialSortBy(column);
+      setHistorialSortDirection('desc');
+    }
+    setHistorialPage(1);
   };
 
   // Assign modal state
@@ -169,13 +184,15 @@ export default function SubsidiosPage() {
 
   // Fetch historial (client assignments)
   const { data: historialData, isLoading: loadingHistorial } = useQuery<HistorialResponse>({
-    queryKey: ['admin-subsidio-historial', historialPage, historialSearch, historialFilter],
+    queryKey: ['admin-subsidio-historial', historialPage, historialSearch, historialFilter, historialSortBy, historialSortDirection],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append('page', historialPage.toString());
       params.append('limit', '20');
       if (historialSearch) params.append('search', historialSearch);
       if (historialFilter) params.append('tipoCambio', historialFilter);
+      params.append('sortBy', historialSortBy);
+      params.append('sortDirection', historialSortDirection);
       const res = await adminApiClient.get<HistorialResponse>(`/admin/subsidio-historial?${params}`);
       return res.data;
     },
@@ -241,6 +258,7 @@ export default function SubsidiosPage() {
       toast({ title: 'Subsidio eliminado', description: 'El subsidio se eliminó correctamente' });
       queryClient.invalidateQueries({ queryKey: ['admin-subsidios'] });
       setDeleteSubsidio(null);
+      setSelectedSubsidio(null);
     },
     onError: (error: any) => {
       toast({
@@ -302,6 +320,7 @@ export default function SubsidiosPage() {
       setShowRemove(false);
       setRemoveEntry(null);
       setRemoveMotivo('');
+      setSelectedHistorial(null);
     },
     onError: (error: any) => {
       toast({
@@ -331,6 +350,7 @@ export default function SubsidiosPage() {
       estado: subsidio.estado,
     });
     setShowForm(true);
+    setSelectedSubsidio(null);
   };
 
   const handleCloseForm = () => {
@@ -375,14 +395,30 @@ export default function SubsidiosPage() {
   const subsidiosColumns = [
     {
       key: 'id',
-      header: 'ID',
+      header: (
+        <SortableHeader
+          column="id"
+          label="ID"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (subsidio: Subsidio) => (
         <span className="font-medium text-slate-900">{subsidio.id}</span>
       ),
     },
     {
       key: 'porcentaje',
-      header: 'Descuento',
+      header: (
+        <SortableHeader
+          column="porcentaje"
+          label="Descuento"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (subsidio: Subsidio) => (
         <div className="flex items-center gap-2">
           <span className="font-bold text-emerald-600">{subsidio.porcentaje}%</span>
@@ -397,18 +433,32 @@ export default function SubsidiosPage() {
     },
     {
       key: 'limiteM3',
-      header: 'Límite m³',
-      className: 'text-center',
-      headerClassName: 'text-center',
+      header: (
+        <SortableHeader
+          column="limiteM3"
+          label="Límite m³"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (subsidio: Subsidio) => (
         <span className="text-slate-700">{subsidio.limiteM3} m³</span>
       ),
     },
     {
       key: 'historial',
-      header: 'Clientes',
-      className: 'text-center hidden sm:table-cell',
-      headerClassName: 'text-center hidden sm:table-cell',
+      header: (
+        <SortableHeader
+          column="cantidadHistorial"
+          label="Clientes"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
+      className: 'hidden sm:table-cell',
+      headerClassName: 'hidden sm:table-cell',
       render: (subsidio: Subsidio) => (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
           {subsidio.cantidadHistorial}
@@ -422,42 +472,20 @@ export default function SubsidiosPage() {
       headerClassName: 'hidden md:table-cell',
       render: (subsidio: Subsidio) => <StatusBadge status={subsidio.estado} />,
     },
-    {
-      key: 'acciones',
-      header: 'Acciones',
-      className: 'text-right',
-      headerClassName: 'text-right',
-      render: (subsidio: Subsidio) => (
-        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          {canEdit && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleOpenEdit(subsidio)}
-              className="text-slate-600 hover:text-blue-600"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-          )}
-          {canDelete && subsidio.cantidadHistorial === 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setDeleteSubsidio(subsidio)}
-              className="text-slate-600 hover:text-red-600"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      ),
-    },
   ];
 
   const historialColumns = [
     {
       key: 'cliente',
-      header: 'Cliente',
+      header: (
+        <SortableHeader
+          column="cliente"
+          label="Cliente"
+          sortBy={historialSortBy}
+          sortDirection={historialSortDirection}
+          onSort={handleHistorialSort}
+        />
+      ),
       render: (entry: HistorialEntry) => (
         <div>
           <span className="font-medium text-slate-900">
@@ -469,7 +497,15 @@ export default function SubsidiosPage() {
     },
     {
       key: 'subsidio',
-      header: 'Subsidio',
+      header: (
+        <SortableHeader
+          column="subsidio"
+          label="Subsidio"
+          sortBy={historialSortBy}
+          sortDirection={historialSortDirection}
+          onSort={handleHistorialSort}
+        />
+      ),
       render: (entry: HistorialEntry) =>
         entry.subsidio ? (
           <span className="font-medium text-emerald-600">{entry.subsidio.porcentaje}%</span>
@@ -481,50 +517,32 @@ export default function SubsidiosPage() {
       key: 'tipoCambio',
       header: 'Tipo',
       render: (entry: HistorialEntry) => (
-        <span
-          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-            entry.tipoCambio === 'alta'
-              ? 'bg-green-100 text-green-700'
-              : 'bg-red-100 text-red-700'
-          }`}
-        >
-          {entry.tipoCambio === 'alta' ? 'Alta' : 'Baja'}
-        </span>
+        <StatusBadge
+          status={entry.tipoCambio}
+          statusMap={{
+            alta: { label: 'Alta', className: 'bg-emerald-100 text-emerald-700' },
+            baja: { label: 'Baja', className: 'bg-red-100 text-red-700' },
+          }}
+        />
       ),
     },
     {
       key: 'fechaCambio',
-      header: 'Fecha',
+      header: (
+        <SortableHeader
+          column="fechaCambio"
+          label="Fecha"
+          sortBy={historialSortBy}
+          sortDirection={historialSortDirection}
+          onSort={handleHistorialSort}
+        />
+      ),
       className: 'hidden sm:table-cell',
       headerClassName: 'hidden sm:table-cell',
       render: (entry: HistorialEntry) =>
         entry.fechaCambio
           ? format(new Date(entry.fechaCambio), 'dd/MM/yyyy', { locale: es })
           : '-',
-    },
-    {
-      key: 'acciones',
-      header: 'Acciones',
-      className: 'text-right',
-      headerClassName: 'text-right',
-      render: (entry: HistorialEntry) => (
-        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          {canDelete && entry.tipoCambio === 'alta' && entry.subsidio && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setRemoveEntry(entry);
-                setShowRemove(true);
-              }}
-              className="text-slate-600 hover:text-red-600"
-              title="Dar de baja"
-            >
-              <UserMinus className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      ),
     },
   ];
 
@@ -565,6 +583,7 @@ export default function SubsidiosPage() {
             isLoading={loadingSubsidios}
             emptyMessage="No hay subsidios registrados"
             emptyIcon={<Percent className="h-12 w-12 text-slate-300" />}
+            onRowClick={(subsidio) => setSelectedSubsidio(subsidio)}
             pagination={
               subsidiosData?.pagination && {
                 page: subsidiosData.pagination.page,
@@ -616,6 +635,7 @@ export default function SubsidiosPage() {
             isLoading={loadingHistorial}
             emptyMessage="No hay registros de subsidios"
             emptyIcon={<Percent className="h-12 w-12 text-slate-300" />}
+            onRowClick={(entry) => setSelectedHistorial(entry)}
             pagination={
               historialData?.pagination && {
                 page: historialData.pagination.page,
@@ -627,6 +647,155 @@ export default function SubsidiosPage() {
           />
         </TabsContent>
       </Tabs>
+
+      {/* Subsidio Detail Modal */}
+      <Dialog open={!!selectedSubsidio && !showForm} onOpenChange={(open) => !open && setSelectedSubsidio(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Detalle de Subsidio</DialogTitle>
+          </DialogHeader>
+          {selectedSubsidio && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-slate-500">ID</span>
+                  <p className="font-medium">{selectedSubsidio.id}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Porcentaje</span>
+                  <p className="font-medium text-emerald-600">{selectedSubsidio.porcentaje}%</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Límite m³</span>
+                  <p className="font-medium">{selectedSubsidio.limiteM3} m³</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Estado</span>
+                  <p><StatusBadge status={selectedSubsidio.estado} /></p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Fecha Inicio</span>
+                  <p className="font-medium">
+                    {format(new Date(selectedSubsidio.fechaInicio), 'dd/MM/yyyy', { locale: es })}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Fecha Término</span>
+                  <p className="font-medium">
+                    {selectedSubsidio.fechaTermino
+                      ? format(new Date(selectedSubsidio.fechaTermino), 'dd/MM/yyyy', { locale: es })
+                      : 'Sin fecha fin'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Clientes Asignados</span>
+                  <p className="font-medium">{selectedSubsidio.cantidadHistorial}</p>
+                </div>
+                {selectedSubsidio.numeroDecreto && (
+                  <div>
+                    <span className="text-slate-500">Número de Decreto</span>
+                    <p className="font-medium">{selectedSubsidio.numeroDecreto}</p>
+                  </div>
+                )}
+                {selectedSubsidio.observaciones && (
+                  <div className="col-span-2">
+                    <span className="text-slate-500">Observaciones</span>
+                    <p className="font-medium">{selectedSubsidio.observaciones}</p>
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+                {canDelete && selectedSubsidio.cantidadHistorial === 0 && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setDeleteSubsidio(selectedSubsidio)}
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Eliminar
+                  </Button>
+                )}
+                {canEdit && (
+                  <Button onClick={() => handleOpenEdit(selectedSubsidio)} className="bg-blue-600 hover:bg-blue-700">
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Editar
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Historial Entry Detail Modal */}
+      <Dialog open={!!selectedHistorial} onOpenChange={(open) => !open && setSelectedHistorial(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Detalle de Asignación</DialogTitle>
+          </DialogHeader>
+          {selectedHistorial && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-slate-500">Cliente</span>
+                  <p className="font-medium">{selectedHistorial.cliente?.nombre || selectedHistorial.numeroCliente}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">N° Cliente</span>
+                  <p className="font-medium">{selectedHistorial.numeroCliente}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Subsidio</span>
+                  <p className="font-medium text-emerald-600">
+                    {selectedHistorial.subsidio ? `${selectedHistorial.subsidio.porcentaje}% (${selectedHistorial.subsidio.limiteM3} m³)` : '-'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Tipo</span>
+                  <p>
+                    <StatusBadge
+                      status={selectedHistorial.tipoCambio}
+                      statusMap={{
+                        alta: { label: 'Alta', className: 'bg-emerald-100 text-emerald-700' },
+                        baja: { label: 'Baja', className: 'bg-red-100 text-red-700' },
+                      }}
+                    />
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Fecha</span>
+                  <p className="font-medium">
+                    {selectedHistorial.fechaCambio
+                      ? format(new Date(selectedHistorial.fechaCambio), 'dd/MM/yyyy', { locale: es })
+                      : '-'}
+                  </p>
+                </div>
+                {selectedHistorial.detalles && (
+                  <div className="col-span-2">
+                    <span className="text-slate-500">Detalles</span>
+                    <p className="font-medium">{selectedHistorial.detalles}</p>
+                  </div>
+                )}
+              </div>
+              {canDelete && selectedHistorial.tipoCambio === 'alta' && selectedHistorial.subsidio && (
+                <div className="flex justify-end pt-4 border-t border-slate-100">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setRemoveEntry(selectedHistorial);
+                      setShowRemove(true);
+                    }}
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    <UserMinus className="h-4 w-4 mr-2" />
+                    Dar de Baja
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Create/Edit Subsidio Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>

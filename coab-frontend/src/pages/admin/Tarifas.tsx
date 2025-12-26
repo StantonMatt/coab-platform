@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { DollarSign, Plus, Pencil, Trash2, Check, Eye } from 'lucide-react';
+import { DollarSign, Plus, Pencil, Trash2, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -11,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-  DialogDescription,
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
@@ -19,7 +18,6 @@ import { formatearPesos } from '@coab/utils';
 import {
   AdminLayout,
   DataTable,
-  StatusBadge,
   DeleteConfirmDialog,
   PermissionGate,
   SortableHeader,
@@ -89,14 +87,12 @@ const initialFormData: TarifaFormData = {
 export default function TarifasPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const _canCreate = useCanAccess('tarifas', 'create');
-  void _canCreate; // For future use
   const canEdit = useCanAccess('tarifas', 'edit');
   const canDelete = useCanAccess('tarifas', 'delete');
 
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
-  const [showDetail, setShowDetail] = useState<Tarifa | null>(null);
+  const [selectedTarifa, setSelectedTarifa] = useState<Tarifa | null>(null);
   const [editingTarifa, setEditingTarifa] = useState<Tarifa | null>(null);
   const [deleteTarifa, setDeleteTarifa] = useState<Tarifa | null>(null);
   const [formData, setFormData] = useState<TarifaFormData>(initialFormData);
@@ -180,6 +176,7 @@ export default function TarifasPage() {
       toast({ title: 'Tarifa eliminada', description: 'La tarifa se eliminó correctamente' });
       queryClient.invalidateQueries({ queryKey: ['admin-tarifas'] });
       setDeleteTarifa(null);
+      setSelectedTarifa(null);
     },
     onError: (error: any) => {
       toast({
@@ -215,6 +212,7 @@ export default function TarifasPage() {
       diasGraciaInteres: tarifa.diasGraciaInteres.toString(),
     });
     setShowForm(true);
+    setSelectedTarifa(null);
   };
 
   const handleCloseForm = () => {
@@ -262,7 +260,15 @@ export default function TarifasPage() {
   const columns = [
     {
       key: 'fechas',
-      header: 'Vigencia',
+      header: (
+        <SortableHeader
+          column="fechaInicio"
+          label="Vigencia"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (tarifa: Tarifa) => (
         <div>
           <div className="flex items-center gap-2">
@@ -286,9 +292,17 @@ export default function TarifasPage() {
     },
     {
       key: 'costoM3Agua',
-      header: 'Agua/m³',
-      className: 'text-right hidden sm:table-cell',
-      headerClassName: 'text-right hidden sm:table-cell',
+      header: (
+        <SortableHeader
+          column="costoM3Agua"
+          label="Agua/m³"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
+      className: 'hidden sm:table-cell',
+      headerClassName: 'hidden sm:table-cell',
       render: (tarifa: Tarifa) => (
         <span className="font-medium text-slate-900">
           {formatearPesos(tarifa.costoM3Agua)}
@@ -298,8 +312,8 @@ export default function TarifasPage() {
     {
       key: 'costoM3Alcantarillado',
       header: 'Alcant./m³',
-      className: 'text-right hidden md:table-cell',
-      headerClassName: 'text-right hidden md:table-cell',
+      className: 'hidden md:table-cell',
+      headerClassName: 'hidden md:table-cell',
       render: (tarifa: Tarifa) => (
         <span className="text-slate-700">
           {tarifa.costoM3Alcantarillado ? formatearPesos(tarifa.costoM3Alcantarillado) : '-'}
@@ -307,21 +321,18 @@ export default function TarifasPage() {
       ),
     },
     {
-      key: 'costoM3Tratamiento',
-      header: 'Trat./m³',
-      className: 'text-right hidden lg:table-cell',
-      headerClassName: 'text-right hidden lg:table-cell',
-      render: (tarifa: Tarifa) => (
-        <span className="text-slate-700">
-          {tarifa.costoM3Tratamiento ? formatearPesos(tarifa.costoM3Tratamiento) : '-'}
-        </span>
-      ),
-    },
-    {
       key: 'cargoFijo',
-      header: 'Cargo Fijo',
-      className: 'text-right hidden md:table-cell',
-      headerClassName: 'text-right hidden md:table-cell',
+      header: (
+        <SortableHeader
+          column="cargoFijo"
+          label="Cargo Fijo"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
+      className: 'hidden md:table-cell',
+      headerClassName: 'hidden md:table-cell',
       render: (tarifa: Tarifa) => (
         <span className="text-slate-700">{formatearPesos(tarifa.cargoFijo)}</span>
       ),
@@ -329,48 +340,10 @@ export default function TarifasPage() {
     {
       key: 'tasaIva',
       header: 'IVA',
-      className: 'text-center hidden lg:table-cell',
-      headerClassName: 'text-center hidden lg:table-cell',
+      className: 'hidden lg:table-cell',
+      headerClassName: 'hidden lg:table-cell',
       render: (tarifa: Tarifa) => (
         <span className="text-sm text-slate-600">{(tarifa.tasaIva * 100).toFixed(0)}%</span>
-      ),
-    },
-    {
-      key: 'acciones',
-      header: 'Acciones',
-      className: 'text-right',
-      headerClassName: 'text-right',
-      render: (tarifa: Tarifa) => (
-        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowDetail(tarifa)}
-            className="text-slate-600 hover:text-blue-600"
-          >
-            <Eye className="h-4 w-4" />
-          </Button>
-          {canEdit && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleOpenEdit(tarifa)}
-              className="text-slate-600 hover:text-blue-600"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-          )}
-          {canDelete && !tarifa.esVigente && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setDeleteTarifa(tarifa)}
-              className="text-slate-600 hover:text-red-600"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
       ),
     },
   ];
@@ -396,6 +369,7 @@ export default function TarifasPage() {
         isLoading={isLoading}
         emptyMessage="No hay tarifas registradas"
         emptyIcon={<DollarSign className="h-12 w-12 text-slate-300" />}
+        onRowClick={(tarifa) => setSelectedTarifa(tarifa)}
         pagination={
           data?.pagination && {
             page: data.pagination.page,
@@ -406,77 +380,103 @@ export default function TarifasPage() {
         }
       />
 
-      {/* Detail Dialog */}
-      <Dialog open={!!showDetail} onOpenChange={() => setShowDetail(null)}>
+      {/* Detail Modal */}
+      <Dialog open={!!selectedTarifa && !showForm} onOpenChange={(open) => !open && setSelectedTarifa(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Detalle de Tarifa</DialogTitle>
-            <DialogDescription>
-              Vigente desde {showDetail?.fechaInicio}
-              {showDetail?.fechaFin && ` hasta ${showDetail.fechaFin}`}
-            </DialogDescription>
           </DialogHeader>
-          {showDetail && (
+          {selectedTarifa && (
             <div className="space-y-4">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-sm text-slate-500">
+                  Vigente desde {format(new Date(selectedTarifa.fechaInicio), 'dd/MM/yyyy', { locale: es })}
+                  {selectedTarifa.fechaFin && ` hasta ${format(new Date(selectedTarifa.fechaFin), 'dd/MM/yyyy', { locale: es })}`}
+                </span>
+                {selectedTarifa.esVigente && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                    <Check className="h-3 w-3 mr-1" />
+                    Vigente
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <span className="text-slate-500">Costo Agua/m³</span>
-                  <p className="font-medium">{formatearPesos(showDetail.costoM3Agua)}</p>
+                  <p className="font-medium">{formatearPesos(selectedTarifa.costoM3Agua)}</p>
                 </div>
                 <div>
                   <span className="text-slate-500">Costo Alcantarillado/m³</span>
                   <p className="font-medium">
-                    {showDetail.costoM3Alcantarillado
-                      ? formatearPesos(showDetail.costoM3Alcantarillado)
+                    {selectedTarifa.costoM3Alcantarillado
+                      ? formatearPesos(selectedTarifa.costoM3Alcantarillado)
                       : '-'}
                   </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Costo Tratamiento/m³</span>
                   <p className="font-medium">
-                    {showDetail.costoM3Tratamiento
-                      ? formatearPesos(showDetail.costoM3Tratamiento)
+                    {selectedTarifa.costoM3Tratamiento
+                      ? formatearPesos(selectedTarifa.costoM3Tratamiento)
                       : '-'}
                   </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Alcant. + Trat./m³</span>
                   <p className="font-medium">
-                    {showDetail.costoM3AlcantarilladoTratamiento
-                      ? formatearPesos(showDetail.costoM3AlcantarilladoTratamiento)
+                    {selectedTarifa.costoM3AlcantarilladoTratamiento
+                      ? formatearPesos(selectedTarifa.costoM3AlcantarilladoTratamiento)
                       : '-'}
                   </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Cargo Fijo</span>
-                  <p className="font-medium">{formatearPesos(showDetail.cargoFijo)}</p>
+                  <p className="font-medium">{formatearPesos(selectedTarifa.cargoFijo)}</p>
                 </div>
                 <div>
                   <span className="text-slate-500">Costo Despacho</span>
-                  <p className="font-medium">{formatearPesos(showDetail.costoDespacho)}</p>
+                  <p className="font-medium">{formatearPesos(selectedTarifa.costoDespacho)}</p>
                 </div>
                 <div>
                   <span className="text-slate-500">Reposición 1</span>
-                  <p className="font-medium">{formatearPesos(showDetail.costoReposicion1)}</p>
+                  <p className="font-medium">{formatearPesos(selectedTarifa.costoReposicion1)}</p>
                 </div>
                 <div>
                   <span className="text-slate-500">Reposición 2</span>
-                  <p className="font-medium">{formatearPesos(showDetail.costoReposicion2)}</p>
+                  <p className="font-medium">{formatearPesos(selectedTarifa.costoReposicion2)}</p>
                 </div>
                 <div>
                   <span className="text-slate-500">Tasa IVA</span>
-                  <p className="font-medium">{(showDetail.tasaIva * 100).toFixed(0)}%</p>
+                  <p className="font-medium">{(selectedTarifa.tasaIva * 100).toFixed(0)}%</p>
                 </div>
                 <div>
                   <span className="text-slate-500">Interés Mensual</span>
                   <p className="font-medium">
-                    {(showDetail.tasaInteresMensual * 100).toFixed(2)}%
+                    {(selectedTarifa.tasaInteresMensual * 100).toFixed(2)}%
                   </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Días de Gracia</span>
-                  <p className="font-medium">{showDetail.diasGraciaInteres} días</p>
+                  <p className="font-medium">{selectedTarifa.diasGraciaInteres} días</p>
                 </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+                {canDelete && !selectedTarifa.esVigente && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setDeleteTarifa(selectedTarifa)}
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Eliminar
+                  </Button>
+                )}
+                {canEdit && (
+                  <Button onClick={() => handleOpenEdit(selectedTarifa)} className="bg-blue-600 hover:bg-blue-700">
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Editar
+                  </Button>
+                )}
               </div>
             </div>
           )}

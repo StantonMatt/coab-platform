@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Map, Plus, Pencil, Trash2, Eye, ArrowRightLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Map, Plus, Pencil, Trash2, ArrowRightLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -77,8 +77,6 @@ interface DireccionesResponse {
 export default function RutasPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const _canCreate = useCanAccess('rutas', 'create');
-  void _canCreate; // For future use
   const canEdit = useCanAccess('rutas', 'edit');
   const canDelete = useCanAccess('rutas', 'delete');
 
@@ -86,6 +84,7 @@ export default function RutasPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingRuta, setEditingRuta] = useState<Ruta | null>(null);
   const [deleteRuta, setDeleteRuta] = useState<Ruta | null>(null);
+  const [selectedRuta, setSelectedRuta] = useState<Ruta | null>(null);
 
   // Sort state
   const [sortBy, setSortBy] = useState<string>('nombre');
@@ -107,7 +106,6 @@ export default function RutasPage() {
   const [descripcion, setDescripcion] = useState('');
 
   // Direcciones modal state
-  const [viewingRuta, setViewingRuta] = useState<Ruta | null>(null);
   const [direccionesPage, setDireccionesPage] = useState(1);
   const [selectedDirecciones, setSelectedDirecciones] = useState<string[]>([]);
   const [showReassign, setShowReassign] = useState(false);
@@ -129,14 +127,14 @@ export default function RutasPage() {
 
   // Fetch direcciones for selected ruta
   const { data: direccionesData, isLoading: loadingDirecciones } = useQuery<DireccionesResponse>({
-    queryKey: ['admin-ruta-direcciones', viewingRuta?.id, direccionesPage],
+    queryKey: ['admin-ruta-direcciones', selectedRuta?.id, direccionesPage],
     queryFn: async () => {
       const res = await adminApiClient.get<DireccionesResponse>(
-        `/admin/rutas/${viewingRuta!.id}/direcciones?page=${direccionesPage}&limit=30`
+        `/admin/rutas/${selectedRuta!.id}/direcciones?page=${direccionesPage}&limit=30`
       );
       return res.data;
     },
-    enabled: !!viewingRuta,
+    enabled: !!selectedRuta,
   });
 
   // Create mutation
@@ -195,6 +193,7 @@ export default function RutasPage() {
       toast({ title: 'Ruta eliminada', description: 'La ruta se eliminó correctamente' });
       queryClient.invalidateQueries({ queryKey: ['admin-rutas'] });
       setDeleteRuta(null);
+      setSelectedRuta(null);
     },
     onError: (error: any) => {
       toast({
@@ -242,6 +241,7 @@ export default function RutasPage() {
     setNombre(ruta.nombre);
     setDescripcion(ruta.descripcion || '');
     setShowForm(true);
+    setSelectedRuta(null);
   };
 
   const handleCloseForm = () => {
@@ -251,14 +251,14 @@ export default function RutasPage() {
     setDescripcion('');
   };
 
-  const handleViewDirecciones = (ruta: Ruta) => {
-    setViewingRuta(ruta);
+  const handleRowClick = (ruta: Ruta) => {
+    setSelectedRuta(ruta);
     setDireccionesPage(1);
     setSelectedDirecciones([]);
   };
 
-  const handleCloseDirecciones = () => {
-    setViewingRuta(null);
+  const handleCloseDetail = () => {
+    setSelectedRuta(null);
     setSelectedDirecciones([]);
   };
 
@@ -309,7 +309,15 @@ export default function RutasPage() {
   const columns = [
     {
       key: 'nombre',
-      header: 'Nombre',
+      header: (
+        <SortableHeader
+          column="nombre"
+          label="Nombre"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (ruta: Ruta) => (
         <span className="font-medium text-slate-900">{ruta.nombre}</span>
       ),
@@ -327,9 +335,15 @@ export default function RutasPage() {
     },
     {
       key: 'cantidadDirecciones',
-      header: 'Direcciones',
-      className: 'text-center',
-      headerClassName: 'text-center',
+      header: (
+        <SortableHeader
+          column="cantidadDirecciones"
+          label="Direcciones"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (ruta: Ruta) => (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
           {ruta.cantidadDirecciones}
@@ -338,7 +352,15 @@ export default function RutasPage() {
     },
     {
       key: 'fechaActualizacion',
-      header: 'Última Actualización',
+      header: (
+        <SortableHeader
+          column="fechaActualizacion"
+          label="Última Actualización"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       className: 'hidden lg:table-cell',
       headerClassName: 'hidden lg:table-cell',
       render: (ruta: Ruta) => (
@@ -347,49 +369,10 @@ export default function RutasPage() {
         </span>
       ),
     },
-    {
-      key: 'acciones',
-      header: 'Acciones',
-      className: 'text-right',
-      headerClassName: 'text-right',
-      render: (ruta: Ruta) => (
-        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => handleViewDirecciones(ruta)}
-            className="text-slate-600 hover:text-blue-600"
-            title="Ver direcciones"
-          >
-            <Eye className="h-4 w-4" />
-          </Button>
-          {canEdit && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleOpenEdit(ruta)}
-              className="text-slate-600 hover:text-blue-600"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-          )}
-          {canDelete && ruta.cantidadDirecciones === 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setDeleteRuta(ruta)}
-              className="text-slate-600 hover:text-red-600"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      ),
-    },
   ];
 
   // Filter out current ruta from dropdown
-  const otherRutas = data?.rutas.filter((r) => r.id !== viewingRuta?.id) || [];
+  const otherRutas = data?.rutas.filter((r) => r.id !== selectedRuta?.id) || [];
 
   return (
     <AdminLayout
@@ -412,6 +395,7 @@ export default function RutasPage() {
         isLoading={isLoading}
         emptyMessage="No hay rutas registradas"
         emptyIcon={<Map className="h-12 w-12 text-slate-300" />}
+        onRowClick={handleRowClick}
         pagination={
           data?.pagination && {
             page: data.pagination.page,
@@ -421,6 +405,162 @@ export default function RutasPage() {
           }
         }
       />
+
+      {/* Detail/Direcciones Modal */}
+      <Dialog open={!!selectedRuta && !showForm} onOpenChange={(open) => !open && handleCloseDetail()}>
+        <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Ruta: {selectedRuta?.nombre}</DialogTitle>
+            <DialogDescription>
+              {selectedRuta?.descripcion || 'Sin descripción'} • {direccionesData?.pagination.total || 0} direcciones
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Actions bar */}
+          <div className="flex items-center justify-between py-2">
+            <div className="flex gap-2">
+              {canEdit && (
+                <Button variant="outline" size="sm" onClick={() => selectedRuta && handleOpenEdit(selectedRuta)}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Editar Ruta
+                </Button>
+              )}
+              {canDelete && selectedRuta?.cantidadDirecciones === 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDeleteRuta(selectedRuta)}
+                  className="text-red-600 hover:text-red-700"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Eliminar
+                </Button>
+              )}
+            </div>
+            {canEdit && selectedDirecciones.length > 0 && (
+              <div className="flex items-center gap-4 py-2 px-3 bg-blue-50 rounded-lg">
+                <span className="text-sm font-medium text-blue-700">
+                  {selectedDirecciones.length} seleccionadas
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowReassign(true)}
+                  className="text-blue-700 border-blue-300"
+                >
+                  <ArrowRightLeft className="h-4 w-4 mr-2" />
+                  Mover a otra ruta
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Direcciones list */}
+          <div className="flex-1 overflow-auto">
+            {loadingDirecciones ? (
+              <div className="text-center py-8">
+                <div className="h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+              </div>
+            ) : direccionesData?.direcciones.length === 0 ? (
+              <div className="text-center py-8 text-slate-500">
+                No hay direcciones en esta ruta
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    {canEdit && (
+                      <th className="px-3 py-2 text-left w-10">
+                        <Checkbox
+                          checked={
+                            direccionesData?.direcciones.length === selectedDirecciones.length &&
+                            selectedDirecciones.length > 0
+                          }
+                          onCheckedChange={handleSelectAll}
+                        />
+                      </th>
+                    )}
+                    <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">
+                      Orden
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">
+                      Cliente
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">
+                      Dirección
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">
+                      Medidores
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {direccionesData?.direcciones.map((dir) => (
+                    <tr
+                      key={dir.id}
+                      className={`hover:bg-slate-50 ${
+                        selectedDirecciones.includes(dir.id) ? 'bg-blue-50' : ''
+                      }`}
+                    >
+                      {canEdit && (
+                        <td className="px-3 py-2">
+                          <Checkbox
+                            checked={selectedDirecciones.includes(dir.id)}
+                            onCheckedChange={() => handleToggleDireccion(dir.id)}
+                          />
+                        </td>
+                      )}
+                      <td className="px-3 py-2 text-sm text-slate-500">{dir.ordenRuta}</td>
+                      <td className="px-3 py-2">
+                        <div className="text-sm font-medium text-slate-900">
+                          {dir.clienteNombre}
+                        </div>
+                        <div className="text-xs text-slate-500">{dir.clienteNumero}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="text-sm text-slate-700">{dir.direccion}</div>
+                        <div className="text-xs text-slate-500">{dir.poblacion}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
+                          {dir.tienesMedidores}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {direccionesData && direccionesData.pagination.totalPages > 1 && (
+            <div className="flex items-center justify-between pt-4 border-t">
+              <span className="text-sm text-slate-500">
+                Página {direccionesData.pagination.page} de {direccionesData.pagination.totalPages}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={direccionesPage <= 1}
+                  onClick={() => setDireccionesPage((p) => p - 1)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={direccionesPage >= direccionesData.pagination.totalPages}
+                  onClick={() => setDireccionesPage((p) => p + 1)}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Create/Edit Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
@@ -471,141 +611,6 @@ export default function RutasPage() {
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Direcciones Modal */}
-      <Dialog open={!!viewingRuta} onOpenChange={(open) => !open && handleCloseDirecciones()}>
-        <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Direcciones de {viewingRuta?.nombre}</DialogTitle>
-            <DialogDescription>
-              {direccionesData?.pagination.total || 0} direcciones en esta ruta
-            </DialogDescription>
-          </DialogHeader>
-
-          {/* Actions bar */}
-          {canEdit && selectedDirecciones.length > 0 && (
-            <div className="flex items-center gap-4 py-2 px-3 bg-blue-50 rounded-lg">
-              <span className="text-sm font-medium text-blue-700">
-                {selectedDirecciones.length} seleccionadas
-              </span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowReassign(true)}
-                className="text-blue-700 border-blue-300"
-              >
-                <ArrowRightLeft className="h-4 w-4 mr-2" />
-                Mover a otra ruta
-              </Button>
-            </div>
-          )}
-
-          {/* Direcciones list */}
-          <div className="flex-1 overflow-auto">
-            {loadingDirecciones ? (
-              <div className="text-center py-8">
-                <div className="h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
-              </div>
-            ) : direccionesData?.direcciones.length === 0 ? (
-              <div className="text-center py-8 text-slate-500">
-                No hay direcciones en esta ruta
-              </div>
-            ) : (
-              <table className="w-full">
-                <thead className="bg-slate-50 sticky top-0">
-                  <tr>
-                    {canEdit && (
-                      <th className="px-3 py-2 text-left w-10">
-                        <Checkbox
-                          checked={
-                            direccionesData?.direcciones.length === selectedDirecciones.length &&
-                            selectedDirecciones.length > 0
-                          }
-                          onCheckedChange={handleSelectAll}
-                        />
-                      </th>
-                    )}
-                    <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">
-                      Orden
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">
-                      Cliente
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">
-                      Dirección
-                    </th>
-                    <th className="px-3 py-2 text-center text-xs font-medium text-slate-600">
-                      Medidores
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {direccionesData?.direcciones.map((dir) => (
-                    <tr
-                      key={dir.id}
-                      className={`hover:bg-slate-50 ${
-                        selectedDirecciones.includes(dir.id) ? 'bg-blue-50' : ''
-                      }`}
-                    >
-                      {canEdit && (
-                        <td className="px-3 py-2">
-                          <Checkbox
-                            checked={selectedDirecciones.includes(dir.id)}
-                            onCheckedChange={() => handleToggleDireccion(dir.id)}
-                          />
-                        </td>
-                      )}
-                      <td className="px-3 py-2 text-sm text-slate-500">{dir.ordenRuta}</td>
-                      <td className="px-3 py-2">
-                        <div className="text-sm font-medium text-slate-900">
-                          {dir.clienteNombre}
-                        </div>
-                        <div className="text-xs text-slate-500">{dir.clienteNumero}</div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="text-sm text-slate-700">{dir.direccion}</div>
-                        <div className="text-xs text-slate-500">{dir.poblacion}</div>
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
-                          {dir.tienesMedidores}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {/* Pagination */}
-          {direccionesData && direccionesData.pagination.totalPages > 1 && (
-            <div className="flex items-center justify-between pt-4 border-t">
-              <span className="text-sm text-slate-500">
-                Página {direccionesData.pagination.page} de {direccionesData.pagination.totalPages}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={direccionesPage <= 1}
-                  onClick={() => setDireccionesPage((p) => p - 1)}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={direccionesPage >= direccionesData.pagination.totalPages}
-                  onClick={() => setDireccionesPage((p) => p + 1)}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
         </DialogContent>
       </Dialog>
 
