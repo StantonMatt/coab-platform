@@ -2008,7 +2008,6 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         search: query.search,
         sortBy: query.sortBy,
         sortDirection: query.sortDirection,
-        search: query.search,
       });
       return result;
     } catch (error: any) {

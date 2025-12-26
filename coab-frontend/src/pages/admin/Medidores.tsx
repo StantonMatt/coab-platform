@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Gauge, Plus, Pencil, Trash2, Search, MapPin, Check } from 'lucide-react';
@@ -98,7 +97,6 @@ const initialFormData: MedidorFormData = {
 
 export default function MedidoresPage() {
   const { toast } = useToast();
-  const navigate = useNavigate();
   const _canCreate = useCanAccess('medidores', 'create');
   void _canCreate; // For future use
   const canEdit = useCanAccess('medidores', 'edit');
@@ -163,9 +161,6 @@ export default function MedidoresPage() {
     },
     enabled: debouncedAddressSearch.length >= 2 && !selectedAddress,
   });
-
-  // Data is now fetched by useAdminTable hook above
-  const data = { medidores }; // Compatibility wrapper
 
   // Create mutation
   const createMutation = useMutation({

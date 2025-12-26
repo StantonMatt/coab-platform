@@ -55,16 +55,6 @@ interface Direccion {
   tienesMedidores: number;
 }
 
-interface RutasResponse {
-  rutas: Ruta[];
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
-}
-
 interface DireccionesResponse {
   direcciones: Direccion[];
   pagination: {

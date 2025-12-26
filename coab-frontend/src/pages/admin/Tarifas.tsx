@@ -43,16 +43,6 @@ interface Tarifa {
   esVigente: boolean;
 }
 
-interface TarifasResponse {
-  tarifas: Tarifa[];
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
-}
-
 interface TarifaFormData {
   costoDespacho: string;
   costoReposicion1: string;
