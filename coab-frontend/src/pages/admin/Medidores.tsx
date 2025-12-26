@@ -166,17 +166,6 @@ export default function MedidoresPage() {
 
   // Data is now fetched by useAdminTable hook above
   const data = { medidores }; // Compatibility wrapper
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (search) params.append('search', search);
-      if (estadoFilter) params.append('estado', estadoFilter);
-      params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      
-      const res = await adminApiClient.get<MedidoresResponse>(`/admin/medidores?${params}`);
-      return res.data;
-    },
-  });
 
   // Create mutation
   const createMutation = useMutation({
