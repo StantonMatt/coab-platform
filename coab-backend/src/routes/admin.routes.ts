@@ -2597,6 +2597,193 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
+  // DESCUENTOS APLICADOS Endpoints
+  // =========================================================================
+
+  // GET /admin/descuentos-aplicados - List all applied discounts with filters
+  fastify.get('/descuentos-aplicados', async (request, reply) => {
+    try {
+      const query = z.object({
+        page: z.coerce.number().default(1),
+        limit: z.coerce.number().default(50),
+        clienteId: z.string().optional(),
+        rutaId: z.string().optional(),
+        descuentoId: z.string().optional(),
+        soloPlantilla: z.enum(['true', 'false']).optional().transform(v => v === 'true'),
+        soloAdhoc: z.enum(['true', 'false']).optional().transform(v => v === 'true'),
+        soloPendientes: z.enum(['true', 'false']).optional().transform(v => v === 'true'),
+        fechaDesde: z.string().optional(),
+        fechaHasta: z.string().optional(),
+        search: z.string().optional(),
+        sortBy: z.enum(['cliente', 'monto', 'fecha', 'estado']).optional().default('fecha'),
+        sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
+      }).parse(request.query);
+
+      return await descuentosService.getAllDescuentosAplicados(
+        query.page,
+        query.limit,
+        {
+          clienteId: query.clienteId,
+          rutaId: query.rutaId,
+          descuentoId: query.descuentoId,
+          soloPlantilla: query.soloPlantilla,
+          soloAdhoc: query.soloAdhoc,
+          soloPendientes: query.soloPendientes,
+          fechaDesde: query.fechaDesde,
+          fechaHasta: query.fechaHasta,
+          search: query.search,
+        },
+        query.sortBy,
+        query.sortDirection
+      );
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener descuentos aplicados');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener descuentos aplicados' },
+      });
+    }
+  });
+
+  // GET /admin/descuentos-aplicados/:id - Get single applied discount details
+  fastify.get('/descuentos-aplicados/:id', async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await descuentosService.getDescuentoAplicadoById(BigInt(id));
+    } catch (error: any) {
+      if (error.message?.includes('no encontrado')) {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      }
+      fastify.log.error(error, 'Error al obtener descuento aplicado');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener descuento aplicado' },
+      });
+    }
+  });
+
+  // POST /admin/descuentos-aplicados/individual - Create ad-hoc discount for one client
+  fastify.post('/descuentos-aplicados/individual', { preHandler: requirePermission('descuentos', 'create') }, async (request, reply) => {
+    try {
+      const data = z.object({
+        clienteId: z.string().regex(/^\d+$/, 'ID de cliente inválido'),
+        tipo: z.enum(['porcentaje', 'monto_fijo']),
+        valor: z.number().positive('El valor debe ser mayor a 0'),
+        motivo: z.string().min(1, 'Debe proporcionar un motivo'),
+      }).parse(request.body);
+
+      const result = await descuentosService.createDescuentoIndividual(data, request.user!.email!);
+      return reply.code(201).send(result);
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
+      }
+      if (error.message?.includes('no encontrado')) {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      }
+      fastify.log.error(error, 'Error al crear descuento individual');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al crear descuento' },
+      });
+    }
+  });
+
+  // POST /admin/descuentos-aplicados/masivo - Create template + bulk apply
+  fastify.post('/descuentos-aplicados/masivo', { preHandler: requirePermission('descuentos', 'create') }, async (request, reply) => {
+    try {
+      const data = z.object({
+        descuentoId: z.string().regex(/^\d+$/).optional(),
+        template: z.object({
+          nombre: z.string().min(1, 'Nombre es requerido'),
+          tipo: z.enum(['porcentaje', 'monto_fijo']),
+          valor: z.number().positive('El valor debe ser mayor a 0'),
+          descripcion: z.string().optional(),
+        }).optional(),
+        recipientFilter: z.enum(['todos', 'ruta', 'manual']),
+        rutaId: z.string().regex(/^\d+$/).optional(),
+        clienteIds: z.array(z.string().regex(/^\d+$/)).optional(),
+      }).refine(
+        (d) => d.descuentoId || d.template,
+        { message: 'Debe proporcionar un descuentoId existente o datos de template' }
+      ).refine(
+        (d) => d.recipientFilter !== 'ruta' || d.rutaId,
+        { message: 'Debe especificar una ruta cuando el filtro es "ruta"' }
+      ).refine(
+        (d) => d.recipientFilter !== 'manual' || (d.clienteIds && d.clienteIds.length > 0),
+        { message: 'Debe seleccionar al menos un cliente cuando el filtro es "manual"' }
+      ).parse(request.body);
+
+      const result = await descuentosService.createDescuentoMasivo(data, request.user!.email!);
+      return reply.code(201).send(result);
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
+      }
+      if (error.message?.includes('no encontr')) {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      }
+      fastify.log.error(error, 'Error al crear descuento masivo');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: error.message || 'Error al crear descuento masivo' },
+      });
+    }
+  });
+
+  // DELETE /admin/descuentos-aplicados/:id - Remove pending discount
+  fastify.delete('/descuentos-aplicados/:id', { preHandler: requirePermission('descuentos', 'delete') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await descuentosService.deleteDescuentoAplicado(BigInt(id), request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrado')) {
+        return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      }
+      if (error.message?.includes('No se puede eliminar')) {
+        return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.message } });
+      }
+      fastify.log.error(error, 'Error al eliminar descuento aplicado');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al eliminar descuento' },
+      });
+    }
+  });
+
+  // GET /admin/descuentos-aplicados/rutas - Get all rutas for dropdown
+  fastify.get('/descuentos-aplicados/rutas', async (request, reply) => {
+    try {
+      const rutas = await descuentosService.getAllRutas();
+      return { rutas };
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener rutas');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener rutas' },
+      });
+    }
+  });
+
+  // GET /admin/descuentos-aplicados/preview-count - Get client count for preview
+  fastify.get('/descuentos-aplicados/preview-count', async (request, reply) => {
+    try {
+      const query = z.object({
+        filter: z.enum(['todos', 'ruta', 'manual']),
+        rutaId: z.string().optional(),
+        clienteIds: z.string().optional(), // comma-separated
+      }).parse(request.query);
+
+      const clienteIds = query.clienteIds?.split(',').filter(Boolean);
+      const count = await descuentosService.getClientCountByFilter(
+        query.filter,
+        query.rutaId,
+        clienteIds
+      );
+      return { count };
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener conteo de clientes');
+      return reply.code(500).send({
+        error: { code: 'INTERNAL_ERROR', message: 'Error al obtener conteo' },
+      });
+    }
+  });
+
+  // =========================================================================
   // CORTES DE SERVICIO CRUD Endpoints
   // =========================================================================
 

@@ -31,3 +31,5 @@ export {
   type PermissionAction,
   type PermissionEntity,
 } from './PermissionGate';
+export { DescuentoIndividualForm } from './DescuentoIndividualForm';
+export { DescuentoMasivoWizard } from './DescuentoMasivoWizard';

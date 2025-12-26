@@ -2,28 +2,92 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { AdminLayout, DataTable, StatusBadge, PermissionGate, SortableHeader, useCanAccess, useAdminTable } from '@/components/admin';
+import {
+  AdminLayout,
+  DataTable,
+  StatusBadge,
+  PermissionGate,
+  SortableHeader,
+  useCanAccess,
+  useAdminTable,
+  DescuentoIndividualForm,
+  DescuentoMasivoWizard,
+} from '@/components/admin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import adminApi from '@/lib/adminApi';
-import { Plus, Tag, Pencil, Trash2, Play } from 'lucide-react';
+import {
+  Plus,
+  Tag,
+  Pencil,
+  Trash2,
+  User,
+  Users,
+  FileText,
+  Search,
+  Filter,
+} from 'lucide-react';
 import { formatearPesos } from '@coab/utils';
 
+// ============================================================================
+// Types
+// ============================================================================
+
+interface DescuentoAplicado {
+  id: string;
+  clienteId: string | null;
+  clienteNombre: string | null;
+  clienteNumero: string | null;
+  boletaId: string | null;
+  boletaPeriodo: string | null;
+  descuentoId: string | null;
+  descuentoNombre: string | null;
+  tipoDescuento: string;
+  valorDescuento: number | null;
+  montoAplicado: number;
+  motivoAdhoc: string | null;
+  fechaAplicacion: string | null;
+  estado: 'pendiente' | 'aplicado';
+  esAdhoc: boolean;
+}
+
+interface DescuentoAplicadoFilters extends Record<string, unknown> {
+  search: string;
+  estado: string;
+  tipo: string;
+}
+
 interface Descuento {
-  id: number;
+  id: string;
   nombre: string;
   descripcion: string | null;
-  tipo: string; // porcentaje, monto_fijo
+  tipoDescuento: string;
   valor: number;
   activo: boolean;
-  fecha_inicio: string | null;
-  fecha_fin: string | null;
-  creado_en: string;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  fechaCreacion: string;
+  esVigente: boolean;
 }
 
 interface DescuentoFormData {
@@ -46,33 +110,148 @@ const emptyForm: DescuentoFormData = {
   fecha_fin: '',
 };
 
+// ============================================================================
+// Component
+// ============================================================================
+
 export default function AdminDescuentosPage() {
   const { toast } = useToast();
   const canEdit = useCanAccess('descuentos', 'edit');
   const canDelete = useCanAccess('descuentos', 'delete');
-  const canApply = useCanAccess('descuentos', 'view');
 
-  // Use the admin table hook
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'aplicados' | 'plantillas'>('aplicados');
+
+  // Creation modal state
+  const [showTypeSelector, setShowTypeSelector] = useState(false);
+  const [showIndividualForm, setShowIndividualForm] = useState(false);
+  const [showMasivoWizard, setShowMasivoWizard] = useState(false);
+
+  // Detail modal state
+  const [selectedAplicado, setSelectedAplicado] = useState<DescuentoAplicado | null>(null);
+  const [selectedPlantilla, setSelectedPlantilla] = useState<Descuento | null>(null);
+
+  // Plantilla form state
+  const [isPlantillaModalOpen, setIsPlantillaModalOpen] = useState(false);
+  const [editingPlantillaId, setEditingPlantillaId] = useState<string | null>(null);
+  const [plantillaFormData, setPlantillaFormData] = useState<DescuentoFormData>(emptyForm);
+  const [deletePlantillaConfirm, setDeletePlantillaConfirm] = useState<Descuento | null>(null);
+
+  // ============================================================================
+  // Descuentos Aplicados Table
+  // ============================================================================
+
   const {
-    data: descuentos,
-    tableProps,
-    refetch,
-  } = useAdminTable<Descuento>({
-    endpoint: '/admin/descuentos',
-    queryKey: 'admin-descuentos',
-    dataKey: 'descuentos',
-    defaultSort: { column: 'nombre', direction: 'asc' },
+    data: aplicados,
+    tableProps: aplicadosTableProps,
+    filters,
+    setFilter,
+    refetch: refetchAplicados,
+  } = useAdminTable<DescuentoAplicado, DescuentoAplicadoFilters>({
+    endpoint: '/admin/descuentos-aplicados',
+    queryKey: 'admin-descuentos-aplicados',
+    dataKey: 'descuentosAplicados',
+    defaultSort: { column: 'fecha', direction: 'desc' },
+    defaultFilters: { search: '', estado: '', tipo: '' },
+    enabled: activeTab === 'aplicados',
   });
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [formData, setFormData] = useState<DescuentoFormData>(emptyForm);
-  const [applyingToCliente, setApplyingToCliente] = useState<{ descuentoId: number; clienteId: string } | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<Descuento | null>(null);
-  const [selectedDescuento, setSelectedDescuento] = useState<Descuento | null>(null);
+  // ============================================================================
+  // Plantillas Table
+  // ============================================================================
 
+  const {
+    data: plantillas,
+    tableProps: plantillasTableProps,
+    refetch: refetchPlantillas,
+  } = useAdminTable<Descuento>({
+    endpoint: '/admin/descuentos',
+    queryKey: 'admin-descuentos-plantillas',
+    dataKey: 'descuentos',
+    defaultSort: { column: 'nombre', direction: 'asc' },
+    enabled: activeTab === 'plantillas',
+  });
 
-  const createMutation = useMutation({
+  // ============================================================================
+  // Mutations
+  // ============================================================================
+
+  const createIndividualMutation = useMutation({
+    mutationFn: async (data: {
+      clienteId: string;
+      tipo: 'porcentaje' | 'monto_fijo';
+      valor: number;
+      motivo: string;
+    }) => {
+      return adminApi.post('/admin/descuentos-aplicados/individual', data);
+    },
+    onSuccess: () => {
+      toast({ title: 'Descuento aplicado', description: 'El descuento se ha aplicado al cliente.' });
+      setShowIndividualForm(false);
+      refetchAplicados();
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'No se pudo aplicar el descuento.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const createMasivoMutation = useMutation({
+    mutationFn: async (data: {
+      descuentoId?: string;
+      template?: {
+        nombre: string;
+        tipo: 'porcentaje' | 'monto_fijo';
+        valor: number;
+        descripcion?: string;
+      };
+      recipientFilter: 'todos' | 'ruta' | 'manual';
+      rutaId?: string;
+      clienteIds?: string[];
+    }) => {
+      return adminApi.post('/admin/descuentos-aplicados/masivo', data);
+    },
+    onSuccess: (response) => {
+      const data = response.data;
+      toast({
+        title: 'Descuento masivo aplicado',
+        description: data.mensaje || `Descuento aplicado a ${data.clientesAplicados} cliente(s).`,
+      });
+      setShowMasivoWizard(false);
+      refetchAplicados();
+      refetchPlantillas();
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'No se pudo aplicar el descuento masivo.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const deleteAplicadoMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return adminApi.delete(`/admin/descuentos-aplicados/${id}`);
+    },
+    onSuccess: () => {
+      toast({ title: 'Descuento eliminado', description: 'El descuento pendiente ha sido eliminado.' });
+      setSelectedAplicado(null);
+      refetchAplicados();
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'No se pudo eliminar el descuento.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const createPlantillaMutation = useMutation({
     mutationFn: async (data: DescuentoFormData) => {
       return adminApi.post('/admin/descuentos', {
         nombre: data.nombre,
@@ -85,18 +264,19 @@ export default function AdminDescuentosPage() {
       });
     },
     onSuccess: () => {
-      toast({ title: 'Descuento creado', description: 'El descuento se ha creado exitosamente.' });
-      refetch();
-      closeModal();
+      toast({ title: 'Plantilla creada', description: 'La plantilla de descuento se ha creado exitosamente.' });
+      setIsPlantillaModalOpen(false);
+      setPlantillaFormData(emptyForm);
+      refetchPlantillas();
     },
     onError: () => {
-      toast({ title: 'Error', description: 'No se pudo crear el descuento.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'No se pudo crear la plantilla.', variant: 'destructive' });
     },
   });
 
-  const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: number; data: DescuentoFormData }) => {
-      return adminApi.put(`/admin/descuentos/${id}`, {
+  const updatePlantillaMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: DescuentoFormData }) => {
+      return adminApi.patch(`/admin/descuentos/${id}`, {
         nombre: data.nombre,
         descripcion: data.descripcion || null,
         tipoDescuento: data.tipo,
@@ -107,81 +287,140 @@ export default function AdminDescuentosPage() {
       });
     },
     onSuccess: () => {
-      toast({ title: 'Descuento actualizado', description: 'El descuento se ha actualizado.' });
-      refetch();
-      closeModal();
+      toast({ title: 'Plantilla actualizada', description: 'La plantilla de descuento se ha actualizado.' });
+      setIsPlantillaModalOpen(false);
+      setEditingPlantillaId(null);
+      setPlantillaFormData(emptyForm);
+      refetchPlantillas();
     },
     onError: () => {
-      toast({ title: 'Error', description: 'No se pudo actualizar el descuento.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'No se pudo actualizar la plantilla.', variant: 'destructive' });
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
+  const deletePlantillaMutation = useMutation({
+    mutationFn: async (id: string) => {
       return adminApi.delete(`/admin/descuentos/${id}`);
     },
     onSuccess: () => {
-      toast({ title: 'Descuento eliminado', description: 'El descuento se ha eliminado.' });
-      refetch();
-      setDeleteConfirm(null);
-      setSelectedDescuento(null);
+      toast({ title: 'Plantilla eliminada', description: 'La plantilla de descuento se ha eliminado.' });
+      setDeletePlantillaConfirm(null);
+      setSelectedPlantilla(null);
+      refetchPlantillas();
     },
     onError: () => {
-      toast({ title: 'Error', description: 'No se pudo eliminar el descuento.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'No se pudo eliminar la plantilla.', variant: 'destructive' });
     },
   });
 
-  const applyMutation = useMutation({
-    mutationFn: async ({ descuentoId, clienteId }: { descuentoId: number; clienteId: string }) => {
-      return adminApi.post(`/admin/descuentos/${descuentoId}/aplicar`, { cliente_id: parseInt(clienteId) });
-    },
-    onSuccess: () => {
-      toast({ title: 'Descuento aplicado', description: 'El descuento se ha aplicado al cliente.' });
-      setApplyingToCliente(null);
-    },
-    onError: () => {
-      toast({ title: 'Error', description: 'No se pudo aplicar el descuento.', variant: 'destructive' });
-    },
-  });
+  // ============================================================================
+  // Handlers
+  // ============================================================================
 
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setEditingId(null);
-    setFormData(emptyForm);
+  const handleNuevoDescuento = () => {
+    setShowTypeSelector(true);
   };
 
-  const openCreate = () => {
-    setFormData(emptyForm);
-    setEditingId(null);
-    setIsModalOpen(true);
-  };
-
-  const openEdit = (descuento: Descuento) => {
-    setFormData({
-      nombre: descuento.nombre,
-      descripcion: descuento.descripcion || '',
-      tipo: descuento.tipo as 'porcentaje' | 'monto_fijo',
-      valor: descuento.valor.toString(),
-      activo: descuento.activo,
-      fecha_inicio: descuento.fecha_inicio ? descuento.fecha_inicio.split('T')[0] : '',
-      fecha_fin: descuento.fecha_fin ? descuento.fecha_fin.split('T')[0] : '',
-    });
-    setEditingId(descuento.id);
-    setIsModalOpen(true);
-    setSelectedDescuento(null);
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (editingId) {
-      updateMutation.mutate({ id: editingId, data: formData });
+  const handleSelectType = (type: 'individual' | 'masivo') => {
+    setShowTypeSelector(false);
+    if (type === 'individual') {
+      setShowIndividualForm(true);
     } else {
-      createMutation.mutate(formData);
+      setShowMasivoWizard(true);
     }
   };
 
-  // Columns use SortableHeader with just column and label - context provides the rest!
-  const columns = [
+  const openEditPlantilla = (plantilla: Descuento) => {
+    setPlantillaFormData({
+      nombre: plantilla.nombre,
+      descripcion: plantilla.descripcion || '',
+      tipo: plantilla.tipoDescuento as 'porcentaje' | 'monto_fijo',
+      valor: plantilla.valor.toString(),
+      activo: plantilla.activo,
+      fecha_inicio: plantilla.fechaInicio ? plantilla.fechaInicio.split('T')[0] : '',
+      fecha_fin: plantilla.fechaFin ? plantilla.fechaFin.split('T')[0] : '',
+    });
+    setEditingPlantillaId(plantilla.id);
+    setIsPlantillaModalOpen(true);
+    setSelectedPlantilla(null);
+  };
+
+  const handlePlantillaSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (editingPlantillaId) {
+      updatePlantillaMutation.mutate({ id: editingPlantillaId, data: plantillaFormData });
+    } else {
+      createPlantillaMutation.mutate(plantillaFormData);
+    }
+  };
+
+  // ============================================================================
+  // Column Definitions
+  // ============================================================================
+
+  const aplicadosColumns = [
+    {
+      key: 'cliente',
+      header: <SortableHeader column="cliente" label="Cliente" />,
+      render: (da: DescuentoAplicado) => (
+        <div>
+          <p className="font-medium text-slate-900">{da.clienteNombre || 'N/A'}</p>
+          <p className="text-sm text-slate-500">#{da.clienteNumero}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'descuento',
+      header: 'Descuento',
+      render: (da: DescuentoAplicado) => (
+        <div>
+          <p className="font-medium text-slate-900">
+            {da.esAdhoc ? 'Ad-hoc' : da.descuentoNombre || 'N/A'}
+          </p>
+          <p className="text-sm text-slate-500">
+            {da.tipoDescuento === 'porcentaje' ? 'Porcentaje' : 'Monto Fijo'}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'monto',
+      header: <SortableHeader column="monto" label="Monto" />,
+      render: (da: DescuentoAplicado) => (
+        <span className="font-medium text-emerald-600">
+          -{formatearPesos(da.montoAplicado)}
+        </span>
+      ),
+    },
+    {
+      key: 'estado',
+      header: <SortableHeader column="estado" label="Estado" />,
+      render: (da: DescuentoAplicado) => (
+        <StatusBadge
+          status={da.estado}
+          statusMap={{
+            pendiente: { label: 'Pendiente', className: 'bg-amber-100 text-amber-700' },
+            aplicado: { label: 'Aplicado', className: 'bg-emerald-100 text-emerald-700' },
+          }}
+        />
+      ),
+    },
+    {
+      key: 'fecha',
+      header: <SortableHeader column="fecha" label="Fecha" />,
+      className: 'hidden md:table-cell',
+      headerClassName: 'hidden md:table-cell',
+      render: (da: DescuentoAplicado) => (
+        <span className="text-sm text-slate-600">
+          {da.fechaAplicacion
+            ? format(new Date(da.fechaAplicacion), 'dd/MM/yyyy', { locale: es })
+            : '-'}
+        </span>
+      ),
+    },
+  ];
+
+  const plantillasColumns = [
     {
       key: 'nombre',
       header: <SortableHeader column="nombre" label="Nombre" />,
@@ -191,8 +430,14 @@ export default function AdminDescuentosPage() {
       key: 'tipo',
       header: <SortableHeader column="tipo" label="Tipo" />,
       render: (d: Descuento) => (
-        <span className={`px-2 py-1 text-xs rounded-full ${d.tipo === 'porcentaje' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-          {d.tipo === 'porcentaje' ? 'Porcentaje' : 'Monto Fijo'}
+        <span
+          className={`px-2 py-1 text-xs rounded-full ${
+            d.tipoDescuento === 'porcentaje'
+              ? 'bg-blue-100 text-blue-700'
+              : 'bg-green-100 text-green-700'
+          }`}
+        >
+          {d.tipoDescuento === 'porcentaje' ? 'Porcentaje' : 'Monto Fijo'}
         </span>
       ),
     },
@@ -201,7 +446,7 @@ export default function AdminDescuentosPage() {
       header: <SortableHeader column="valor" label="Valor" />,
       render: (d: Descuento) => (
         <span className="font-medium">
-          {d.tipo === 'porcentaje' ? `${d.valor}%` : formatearPesos(d.valor)}
+          {d.tipoDescuento === 'porcentaje' ? `${d.valor}%` : formatearPesos(d.valor)}
         </span>
       ),
     },
@@ -219,76 +464,297 @@ export default function AdminDescuentosPage() {
       ),
     },
     {
-      key: 'fechaInicio',
+      key: 'vigencia',
       header: 'Vigencia',
       className: 'hidden md:table-cell',
       headerClassName: 'hidden md:table-cell',
       render: (d: Descuento) => (
         <span className="text-sm text-slate-600">
-          {d.fecha_inicio ? format(new Date(d.fecha_inicio), 'dd/MM/yyyy', { locale: es }) : '-'}
-          {d.fecha_fin && ` - ${format(new Date(d.fecha_fin), 'dd/MM/yyyy', { locale: es })}`}
+          {d.fechaInicio ? format(new Date(d.fechaInicio), 'dd/MM/yyyy', { locale: es }) : '-'}
+          {d.fechaFin && ` - ${format(new Date(d.fechaFin), 'dd/MM/yyyy', { locale: es })}`}
         </span>
       ),
     },
   ];
 
+  // ============================================================================
+  // Render
+  // ============================================================================
+
   return (
     <AdminLayout
       title="Descuentos"
-      subtitle="Gestiona los descuentos disponibles para aplicar a clientes."
+      subtitle="Gestiona los descuentos aplicados y plantillas de descuento."
       icon={<Tag className="h-5 w-5 text-blue-600" />}
       actions={
         <PermissionGate entity="descuentos" action="create">
-          <Button onClick={openCreate} className="bg-blue-600 hover:bg-blue-700">
+          <Button onClick={handleNuevoDescuento} className="bg-blue-600 hover:bg-blue-700">
             <Plus className="h-4 w-4 mr-2" />
             Nuevo Descuento
           </Button>
         </PermissionGate>
       }
     >
-      {/* DataTable with sorting prop - provides context to SortableHeader */}
-      <DataTable
-        data={descuentos}
-        columns={columns}
-        keyExtractor={(d) => d.id.toString()}
-        emptyMessage="No hay descuentos registrados."
-        emptyIcon={<Tag className="h-12 w-12 text-slate-300" />}
-        onRowClick={(d) => setSelectedDescuento(d)}
-        {...tableProps}
-      />
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'aplicados' | 'plantillas')}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="aplicados" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Descuentos Aplicados
+          </TabsTrigger>
+          <TabsTrigger value="plantillas" className="flex items-center gap-2">
+            <Tag className="h-4 w-4" />
+            Plantillas
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Detail Modal */}
-      <Dialog open={!!selectedDescuento && !isModalOpen} onOpenChange={(open) => !open && setSelectedDescuento(null)}>
+        {/* Tab: Descuentos Aplicados */}
+        <TabsContent value="aplicados">
+          {/* Filters */}
+          <div className="flex flex-wrap gap-4 mb-4">
+            <div className="flex-1 min-w-[200px] max-w-sm">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  placeholder="Buscar por cliente..."
+                  value={filters.search}
+                  onChange={(e) => setFilter('search', e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+            </div>
+            <Select
+              value={filters.estado || 'all'}
+              onValueChange={(v) => setFilter('estado', v === 'all' ? '' : v)}
+            >
+              <SelectTrigger className="w-[150px]">
+                <Filter className="h-4 w-4 mr-2" />
+                <SelectValue placeholder="Estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="pendiente">Pendientes</SelectItem>
+                <SelectItem value="aplicado">Aplicados</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={filters.tipo || 'all'}
+              onValueChange={(v) => setFilter('tipo', v === 'all' ? '' : v)}
+            >
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Tipo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="plantilla">Con Plantilla</SelectItem>
+                <SelectItem value="adhoc">Ad-hoc</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <DataTable
+            data={aplicados || []}
+            columns={aplicadosColumns}
+            keyExtractor={(da) => da.id}
+            emptyMessage="No hay descuentos aplicados."
+            emptyIcon={<FileText className="h-12 w-12 text-slate-300" />}
+            onRowClick={(da) => setSelectedAplicado(da)}
+            {...aplicadosTableProps}
+          />
+        </TabsContent>
+
+        {/* Tab: Plantillas */}
+        <TabsContent value="plantillas">
+          <div className="flex justify-end mb-4">
+            <PermissionGate entity="descuentos" action="create">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setPlantillaFormData(emptyForm);
+                  setEditingPlantillaId(null);
+                  setIsPlantillaModalOpen(true);
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Nueva Plantilla
+              </Button>
+            </PermissionGate>
+          </div>
+
+          <DataTable
+            data={plantillas || []}
+            columns={plantillasColumns}
+            keyExtractor={(d) => d.id}
+            emptyMessage="No hay plantillas de descuento registradas."
+            emptyIcon={<Tag className="h-12 w-12 text-slate-300" />}
+            onRowClick={(d) => setSelectedPlantilla(d)}
+            {...plantillasTableProps}
+          />
+        </TabsContent>
+      </Tabs>
+
+      {/* Type Selector Modal */}
+      <Dialog open={showTypeSelector} onOpenChange={setShowTypeSelector}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Detalle de Descuento</DialogTitle>
+            <DialogTitle>¿Qué tipo de descuento desea aplicar?</DialogTitle>
+            <DialogDescription>
+              Seleccione si desea aplicar un descuento a un cliente individual o a múltiples clientes.
+            </DialogDescription>
           </DialogHeader>
-          {selectedDescuento && (
+          <div className="grid grid-cols-2 gap-4 py-4">
+            <button
+              onClick={() => handleSelectType('individual')}
+              className="flex flex-col items-center gap-3 p-6 border-2 border-slate-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors"
+            >
+              <User className="h-10 w-10 text-blue-600" />
+              <div className="text-center">
+                <p className="font-semibold text-slate-900">Individual</p>
+                <p className="text-sm text-slate-500">Descuento único para un cliente</p>
+              </div>
+            </button>
+            <button
+              onClick={() => handleSelectType('masivo')}
+              className="flex flex-col items-center gap-3 p-6 border-2 border-slate-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors"
+            >
+              <Users className="h-10 w-10 text-blue-600" />
+              <div className="text-center">
+                <p className="font-semibold text-slate-900">Masivo</p>
+                <p className="text-sm text-slate-500">Aplicar a múltiples clientes</p>
+              </div>
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Individual Form */}
+      <DescuentoIndividualForm
+        open={showIndividualForm}
+        onClose={() => setShowIndividualForm(false)}
+        onSubmit={(data) => createIndividualMutation.mutate(data)}
+        isSubmitting={createIndividualMutation.isPending}
+      />
+
+      {/* Masivo Wizard */}
+      <DescuentoMasivoWizard
+        open={showMasivoWizard}
+        onClose={() => setShowMasivoWizard(false)}
+        onSubmit={(data) => createMasivoMutation.mutate(data)}
+        isSubmitting={createMasivoMutation.isPending}
+      />
+
+      {/* Applied Discount Detail Modal */}
+      <Dialog open={!!selectedAplicado} onOpenChange={(open) => !open && setSelectedAplicado(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Detalle de Descuento Aplicado</DialogTitle>
+          </DialogHeader>
+          {selectedAplicado && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-slate-500">Nombre</span>
-                  <p className="font-medium">{selectedDescuento.nombre}</p>
+                  <span className="text-slate-500">Cliente</span>
+                  <p className="font-medium">{selectedAplicado.clienteNombre}</p>
+                  <p className="text-sm text-slate-500">#{selectedAplicado.clienteNumero}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Estado</span>
+                  <p>
+                    <StatusBadge
+                      status={selectedAplicado.estado}
+                      statusMap={{
+                        pendiente: { label: 'Pendiente', className: 'bg-amber-100 text-amber-700' },
+                        aplicado: { label: 'Aplicado', className: 'bg-emerald-100 text-emerald-700' },
+                      }}
+                    />
+                  </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Tipo</span>
                   <p className="font-medium">
-                    {selectedDescuento.tipo === 'porcentaje' ? 'Porcentaje' : 'Monto Fijo'}
+                    {selectedAplicado.esAdhoc ? 'Ad-hoc' : 'Plantilla'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Monto</span>
+                  <p className="font-medium text-emerald-600">
+                    -{formatearPesos(selectedAplicado.montoAplicado)}
+                  </p>
+                </div>
+                {selectedAplicado.descuentoNombre && (
+                  <div className="col-span-2">
+                    <span className="text-slate-500">Plantilla</span>
+                    <p className="font-medium">{selectedAplicado.descuentoNombre}</p>
+                  </div>
+                )}
+                {selectedAplicado.boletaPeriodo && (
+                  <div className="col-span-2">
+                    <span className="text-slate-500">Boleta</span>
+                    <p className="font-medium">Periodo: {selectedAplicado.boletaPeriodo}</p>
+                  </div>
+                )}
+                <div className="col-span-2">
+                  <span className="text-slate-500">Fecha de Aplicación</span>
+                  <p className="font-medium">
+                    {selectedAplicado.fechaAplicacion
+                      ? format(new Date(selectedAplicado.fechaAplicacion), "d 'de' MMMM 'de' yyyy", {
+                          locale: es,
+                        })
+                      : '-'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+                {selectedAplicado.estado === 'pendiente' && canDelete && (
+                  <Button
+                    variant="destructive"
+                    onClick={() => deleteAplicadoMutation.mutate(selectedAplicado.id)}
+                    disabled={deleteAplicadoMutation.isPending}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Eliminar
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Plantilla Detail Modal */}
+      <Dialog
+        open={!!selectedPlantilla && !isPlantillaModalOpen}
+        onOpenChange={(open) => !open && setSelectedPlantilla(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Detalle de Plantilla</DialogTitle>
+          </DialogHeader>
+          {selectedPlantilla && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-slate-500">Nombre</span>
+                  <p className="font-medium">{selectedPlantilla.nombre}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Tipo</span>
+                  <p className="font-medium">
+                    {selectedPlantilla.tipoDescuento === 'porcentaje' ? 'Porcentaje' : 'Monto Fijo'}
                   </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Valor</span>
                   <p className="font-medium text-emerald-600">
-                    {selectedDescuento.tipo === 'porcentaje'
-                      ? `${selectedDescuento.valor}%`
-                      : formatearPesos(selectedDescuento.valor)}
+                    {selectedPlantilla.tipoDescuento === 'porcentaje'
+                      ? `${selectedPlantilla.valor}%`
+                      : formatearPesos(selectedPlantilla.valor)}
                   </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Estado</span>
                   <p>
                     <StatusBadge
-                      status={selectedDescuento.activo ? 'activo' : 'inactivo'}
+                      status={selectedPlantilla.activo ? 'activo' : 'inactivo'}
                       statusMap={{
                         activo: { label: 'Activo', className: 'bg-emerald-100 text-emerald-700' },
                         inactivo: { label: 'Inactivo', className: 'bg-slate-100 text-slate-600' },
@@ -299,43 +765,31 @@ export default function AdminDescuentosPage() {
                 <div>
                   <span className="text-slate-500">Fecha Inicio</span>
                   <p className="font-medium">
-                    {selectedDescuento.fecha_inicio
-                      ? format(new Date(selectedDescuento.fecha_inicio), 'dd/MM/yyyy', { locale: es })
+                    {selectedPlantilla.fechaInicio
+                      ? format(new Date(selectedPlantilla.fechaInicio), 'dd/MM/yyyy', { locale: es })
                       : '-'}
                   </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Fecha Fin</span>
                   <p className="font-medium">
-                    {selectedDescuento.fecha_fin
-                      ? format(new Date(selectedDescuento.fecha_fin), 'dd/MM/yyyy', { locale: es })
+                    {selectedPlantilla.fechaFin
+                      ? format(new Date(selectedPlantilla.fechaFin), 'dd/MM/yyyy', { locale: es })
                       : 'Sin fecha fin'}
                   </p>
                 </div>
-                {selectedDescuento.descripcion && (
+                {selectedPlantilla.descripcion && (
                   <div className="col-span-2">
                     <span className="text-slate-500">Descripción</span>
-                    <p className="font-medium">{selectedDescuento.descripcion}</p>
+                    <p className="font-medium">{selectedPlantilla.descripcion}</p>
                   </div>
                 )}
               </div>
               <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-                {canApply && selectedDescuento.activo && (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setApplyingToCliente({ descuentoId: selectedDescuento.id, clienteId: '' });
-                      setSelectedDescuento(null);
-                    }}
-                  >
-                    <Play className="h-4 w-4 mr-2" />
-                    Aplicar a Cliente
-                  </Button>
-                )}
                 {canDelete && (
                   <Button
                     variant="outline"
-                    onClick={() => setDeleteConfirm(selectedDescuento)}
+                    onClick={() => setDeletePlantillaConfirm(selectedPlantilla)}
                     className="text-red-600 hover:text-red-700"
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
@@ -343,7 +797,10 @@ export default function AdminDescuentosPage() {
                   </Button>
                 )}
                 {canEdit && (
-                  <Button onClick={() => openEdit(selectedDescuento)} className="bg-blue-600 hover:bg-blue-700">
+                  <Button
+                    onClick={() => openEditPlantilla(selectedPlantilla)}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
                     <Pencil className="h-4 w-4 mr-2" />
                     Editar
                   </Button>
@@ -354,23 +811,26 @@ export default function AdminDescuentosPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+      {/* Delete Plantilla Confirmation */}
+      <Dialog open={!!deletePlantillaConfirm} onOpenChange={() => setDeletePlantillaConfirm(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>¿Eliminar descuento?</DialogTitle>
+            <DialogTitle>¿Eliminar plantilla?</DialogTitle>
             <DialogDescription>
-              Esta acción eliminará el descuento &quot;{deleteConfirm?.nombre}&quot;. Esta acción no se puede deshacer.
+              Esta acción eliminará la plantilla &quot;{deletePlantillaConfirm?.nombre}&quot;. Los
+              descuentos ya aplicados no se verán afectados.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>
+            <Button variant="outline" onClick={() => setDeletePlantillaConfirm(null)}>
               Cancelar
             </Button>
             <Button
               variant="destructive"
-              onClick={() => deleteConfirm && deleteMutation.mutate(deleteConfirm.id)}
-              disabled={deleteMutation.isPending}
+              onClick={() =>
+                deletePlantillaConfirm && deletePlantillaMutation.mutate(deletePlantillaConfirm.id)
+              }
+              disabled={deletePlantillaMutation.isPending}
             >
               Eliminar
             </Button>
@@ -378,48 +838,65 @@ export default function AdminDescuentosPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Create/Edit Modal */}
-      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+      {/* Create/Edit Plantilla Modal */}
+      <Dialog open={isPlantillaModalOpen} onOpenChange={setIsPlantillaModalOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingId ? 'Editar Descuento' : 'Nuevo Descuento'}</DialogTitle>
+            <DialogTitle>
+              {editingPlantillaId ? 'Editar Plantilla' : 'Nueva Plantilla de Descuento'}
+            </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handlePlantillaSubmit} className="space-y-4">
             <div>
               <Label>Nombre *</Label>
               <Input
-                value={formData.nombre}
-                onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
+                value={plantillaFormData.nombre}
+                onChange={(e) =>
+                  setPlantillaFormData({ ...plantillaFormData, nombre: e.target.value })
+                }
                 required
               />
             </div>
             <div>
               <Label>Descripción</Label>
               <Textarea
-                value={formData.descripcion}
-                onChange={(e) => setFormData({ ...formData, descripcion: e.target.value })}
+                value={plantillaFormData.descripcion}
+                onChange={(e) =>
+                  setPlantillaFormData({ ...plantillaFormData, descripcion: e.target.value })
+                }
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Tipo *</Label>
-                <select
-                  className="w-full border rounded-md px-3 py-2"
-                  value={formData.tipo}
-                  onChange={(e) => setFormData({ ...formData, tipo: e.target.value as 'porcentaje' | 'monto_fijo' })}
+                <Select
+                  value={plantillaFormData.tipo}
+                  onValueChange={(v) =>
+                    setPlantillaFormData({
+                      ...plantillaFormData,
+                      tipo: v as 'porcentaje' | 'monto_fijo',
+                    })
+                  }
                 >
-                  <option value="porcentaje">Porcentaje</option>
-                  <option value="monto_fijo">Monto Fijo</option>
-                </select>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="porcentaje">Porcentaje</SelectItem>
+                    <SelectItem value="monto_fijo">Monto Fijo</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label>Valor *</Label>
                 <Input
                   type="number"
-                  step={formData.tipo === 'porcentaje' ? '0.01' : '1'}
+                  step={plantillaFormData.tipo === 'porcentaje' ? '0.01' : '1'}
                   min="0"
-                  value={formData.valor}
-                  onChange={(e) => setFormData({ ...formData, valor: e.target.value })}
+                  value={plantillaFormData.valor}
+                  onChange={(e) =>
+                    setPlantillaFormData({ ...plantillaFormData, valor: e.target.value })
+                  }
                   required
                 />
               </div>
@@ -429,75 +906,53 @@ export default function AdminDescuentosPage() {
                 <Label>Fecha Inicio</Label>
                 <Input
                   type="date"
-                  value={formData.fecha_inicio}
-                  onChange={(e) => setFormData({ ...formData, fecha_inicio: e.target.value })}
+                  value={plantillaFormData.fecha_inicio}
+                  onChange={(e) =>
+                    setPlantillaFormData({ ...plantillaFormData, fecha_inicio: e.target.value })
+                  }
                 />
               </div>
               <div>
                 <Label>Fecha Fin</Label>
                 <Input
                   type="date"
-                  value={formData.fecha_fin}
-                  onChange={(e) => setFormData({ ...formData, fecha_fin: e.target.value })}
+                  value={plantillaFormData.fecha_fin}
+                  onChange={(e) =>
+                    setPlantillaFormData({ ...plantillaFormData, fecha_fin: e.target.value })
+                  }
                 />
               </div>
             </div>
             <div className="flex items-center gap-2">
               <Switch
-                checked={formData.activo}
-                onCheckedChange={(checked) => setFormData({ ...formData, activo: checked })}
+                checked={plantillaFormData.activo}
+                onCheckedChange={(checked) =>
+                  setPlantillaFormData({ ...plantillaFormData, activo: checked })
+                }
               />
               <Label>Activo</Label>
             </div>
             <div className="flex justify-end gap-2 pt-4">
-              <Button type="button" variant="outline" onClick={closeModal}>
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending} className="bg-blue-600 hover:bg-blue-700">
-                {editingId ? 'Guardar' : 'Crear'}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Apply to Client Modal */}
-      <Dialog open={!!applyingToCliente} onOpenChange={() => setApplyingToCliente(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Aplicar Descuento a Cliente</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>ID del Cliente *</Label>
-              <Input
-                type="number"
-                placeholder="Ingrese el ID del cliente"
-                value={applyingToCliente?.clienteId || ''}
-                onChange={(e) =>
-                  setApplyingToCliente((prev) =>
-                    prev ? { ...prev, clienteId: e.target.value } : null
-                  )
-                }
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={() => setApplyingToCliente(null)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setIsPlantillaModalOpen(false);
+                  setEditingPlantillaId(null);
+                  setPlantillaFormData(emptyForm);
+                }}
+              >
                 Cancelar
               </Button>
               <Button
-                onClick={() => {
-                  if (applyingToCliente?.clienteId) {
-                    applyMutation.mutate(applyingToCliente);
-                  }
-                }}
-                disabled={!applyingToCliente?.clienteId || applyMutation.isPending}
+                type="submit"
+                disabled={createPlantillaMutation.isPending || updatePlantillaMutation.isPending}
                 className="bg-blue-600 hover:bg-blue-700"
               >
-                Aplicar
+                {editingPlantillaId ? 'Guardar' : 'Crear'}
               </Button>
             </div>
-          </div>
+          </form>
         </DialogContent>
       </Dialog>
     </AdminLayout>

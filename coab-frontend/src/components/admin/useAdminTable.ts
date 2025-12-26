@@ -45,6 +45,8 @@ export interface UseAdminTableOptions<TFilters extends Record<string, unknown> =
   waitForMetadata?: boolean;
   /** Custom query function (if you need special handling) */
   customQueryFn?: (params: URLSearchParams) => Promise<unknown>;
+  /** Whether the query should be enabled (default: true) */
+  enabled?: boolean;
 }
 
 export interface UseAdminTableReturn<TData, TFilters extends Record<string, unknown>, TMetadata, TResponse = unknown> {
@@ -154,6 +156,7 @@ export function useAdminTable<
     metadataKey,
     onMetadataLoaded,
     waitForMetadata = false,
+    enabled = true,
   } = options;
 
   // ============================================
@@ -218,7 +221,7 @@ export function useAdminTable<
   // Main Data Query
   // ============================================
   
-  const shouldFetchData = waitForMetadata ? filtersInitialized : true;
+  const shouldFetchData = enabled && (waitForMetadata ? filtersInitialized : true);
 
   const {
     data: responseData,
