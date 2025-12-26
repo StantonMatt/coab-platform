@@ -23,12 +23,36 @@ function transformRepactacion(r: any) {
   };
 }
 
-export async function getAllRepactaciones(page: number = 1, limit: number = 50, estado?: string) {
+export async function getAllRepactaciones(
+  page: number = 1,
+  limit: number = 50,
+  estado?: string,
+  sortBy: 'cliente' | 'monto' | 'fechaInicio' | 'estado' = 'fechaInicio',
+  sortDirection: 'asc' | 'desc' = 'desc'
+) {
   const skip = (page - 1) * limit;
   const where = estado ? { estado } : {};
+
+  let orderBy: any;
+  switch (sortBy) {
+    case 'cliente':
+      orderBy = { cliente: { primer_apellido: sortDirection } };
+      break;
+    case 'monto':
+      orderBy = { monto_deuda_inicial: sortDirection };
+      break;
+    case 'estado':
+      orderBy = { estado: sortDirection };
+      break;
+    case 'fechaInicio':
+    default:
+      orderBy = { fecha_inicio: sortDirection };
+      break;
+  }
+
   const [repactaciones, total] = await Promise.all([
     prisma.repactaciones.findMany({
-      where, orderBy: { fecha_creacion: 'desc' }, skip, take: limit,
+      where, orderBy, skip, take: limit,
       include: { cliente: { select: { id: true, numero_cliente: true, primer_nombre: true, primer_apellido: true } } },
     }),
     prisma.repactaciones.count({ where }),

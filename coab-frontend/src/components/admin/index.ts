@@ -4,6 +4,7 @@ export { AdminLayout, PageHeader, useAdminUser } from './AdminLayout';
 export { ClienteEditModal } from './ClienteEditModal';
 export { ConfirmDialog, DeleteConfirmDialog } from './ConfirmDialog';
 export { DataTable, StatusBadge } from './DataTable';
+export { SortableHeader } from './SortableHeader';
 export {
   PermissionGate,
   useCanAccess,

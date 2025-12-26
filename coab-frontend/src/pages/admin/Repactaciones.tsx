@@ -3,8 +3,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AdminLayout,
   DataTable,
+  StatusBadge,
   ConfirmDialog,
   PermissionGate,
+  SortableHeader,
   useCanAccess,
 } from '@/components/admin';
 import { Button } from '@/components/ui/button';
@@ -102,6 +104,24 @@ export default function AdminRepactacionesPage() {
   const [search, setSearch] = useState('');
   const [estadoFilter, setEstadoFilter] = useState('');
 
+  // Sort state
+  const [sortBy, setSortBy] = useState<string>('fechaInicio');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Detail modal state
+  const [selectedRepactacion, setSelectedRepactacion] = useState<Repactacion | null>(null);
+
+  // Sort handler
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDirection('desc');
+    }
+    setPage(1);
+  };
+
   // Confirm dialog states
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
@@ -112,12 +132,14 @@ export default function AdminRepactacionesPage() {
 
   // Query for repactaciones
   const { data: repactacionesData, isLoading: loadingRepactaciones } = useQuery({
-    queryKey: ['admin', 'repactaciones', page, estadoFilter],
+    queryKey: ['admin', 'repactaciones', page, estadoFilter, sortBy, sortDirection],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('limit', '20');
       if (estadoFilter) params.append('estado', estadoFilter);
+      params.append('sortBy', sortBy);
+      params.append('sortDirection', sortDirection);
       const res = await adminApiClient.get(`/admin/repactaciones?${params}`);
       return res.data as {
         repactaciones: Repactacion[];
@@ -273,6 +295,13 @@ export default function AdminRepactacionesPage() {
     return Math.ceil(monto / cuotas);
   };
 
+  const ESTADO_MAP: Record<string, { label: string; className: string }> = {
+    activo: { label: 'Activo', className: 'bg-blue-100 text-blue-700' },
+    completado: { label: 'Completado', className: 'bg-emerald-100 text-emerald-700' },
+    cancelado: { label: 'Cancelado', className: 'bg-red-100 text-red-700' },
+    pendiente: { label: 'Pendiente', className: 'bg-amber-100 text-amber-700' },
+  };
+
   const repactacionesColumns = [
     {
       key: 'convenio',
@@ -288,7 +317,15 @@ export default function AdminRepactacionesPage() {
     },
     {
       key: 'cliente',
-      header: 'Cliente',
+      header: (
+        <SortableHeader
+          column="cliente"
+          label="Cliente"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (r: Repactacion) => (
         <div>
           <p className="font-medium">{r.cliente?.nombre || `Cliente #${r.clienteId}`}</p>
@@ -297,11 +334,17 @@ export default function AdminRepactacionesPage() {
     },
     {
       key: 'monto',
-      header: 'Monto',
-      className: 'text-right hidden sm:table-cell',
-      headerClassName: 'text-right hidden sm:table-cell',
+      header: (
+        <SortableHeader
+          column="monto"
+          label="Monto"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (r: Repactacion) => (
-        <div className="text-right">
+        <div>
           <p className="font-medium">{formatearPesos(r.montoDeudaInicial)}</p>
           <p className="text-xs text-slate-500">
             {r.totalCuotas} cuotas de {formatearPesos(r.montoCuotaBase)}
@@ -311,41 +354,30 @@ export default function AdminRepactacionesPage() {
     },
     {
       key: 'estado',
-      header: 'Estado',
-      render: (r: Repactacion) => getEstadoBadge(r.estado),
+      header: (
+        <SortableHeader
+          column="estado"
+          label="Estado"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
+      render: (r: Repactacion) => <StatusBadge status={r.estado} statusMap={ESTADO_MAP} />,
     },
     {
       key: 'fechaInicio',
-      header: 'Inicio',
-      className: 'hidden md:table-cell',
-      headerClassName: 'hidden md:table-cell',
+      header: (
+        <SortableHeader
+          column="fechaInicio"
+          label="Inicio"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (r: Repactacion) =>
         r.fechaInicio ? format(new Date(r.fechaInicio), 'dd/MM/yyyy', { locale: es }) : '-',
-    },
-    {
-      key: 'acciones',
-      header: 'Acciones',
-      className: 'text-right',
-      headerClassName: 'text-right',
-      render: (r: Repactacion) => (
-        <div className="flex justify-end gap-1">
-          {r.estado === 'activo' && (
-            <PermissionGate entity="repactaciones" action="delete">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setCancelingId(r.id);
-                  setCancelConfirmOpen(true);
-                }}
-                className="text-slate-600 hover:text-red-600"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </PermissionGate>
-          )}
-        </div>
-      ),
     },
   ];
 
@@ -494,6 +526,7 @@ export default function AdminRepactacionesPage() {
             keyExtractor={(r) => r.id}
             emptyMessage="No hay repactaciones registradas"
             emptyIcon={<RefreshCw className="h-12 w-12 text-slate-300" />}
+            onRowClick={(r) => setSelectedRepactacion(r)}
             pagination={
               repactacionesData?.pagination && {
                 page: repactacionesData.pagination.page,
@@ -524,6 +557,81 @@ export default function AdminRepactacionesPage() {
           />
         </TabsContent>
       </Tabs>
+
+      {/* Repactacion Detail Modal */}
+      <Dialog open={!!selectedRepactacion} onOpenChange={() => setSelectedRepactacion(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Detalle de Repactación</DialogTitle>
+          </DialogHeader>
+          {selectedRepactacion && (
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-medium text-slate-900 text-lg">
+                    {selectedRepactacion.numeroConvenio || `Convenio #${selectedRepactacion.id}`}
+                  </span>
+                  <p className="text-sm text-slate-500">
+                    Cliente: {selectedRepactacion.cliente?.nombre}
+                  </p>
+                </div>
+                <StatusBadge status={selectedRepactacion.estado} statusMap={ESTADO_MAP} />
+              </div>
+
+              {/* Details Grid */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="block text-slate-500">Monto Deuda Inicial</span>
+                  <span className="font-medium">{formatearPesos(selectedRepactacion.montoDeudaInicial)}</span>
+                </div>
+                <div>
+                  <span className="block text-slate-500">Total Cuotas</span>
+                  <span className="font-medium">{selectedRepactacion.totalCuotas}</span>
+                </div>
+                <div>
+                  <span className="block text-slate-500">Monto Cuota</span>
+                  <span className="font-medium">{formatearPesos(selectedRepactacion.montoCuotaBase)}</span>
+                </div>
+                <div>
+                  <span className="block text-slate-500">Fecha Inicio</span>
+                  <span className="font-medium">
+                    {selectedRepactacion.fechaInicio
+                      ? format(new Date(selectedRepactacion.fechaInicio), 'dd/MM/yyyy', { locale: es })
+                      : '-'}
+                  </span>
+                </div>
+                {selectedRepactacion.observaciones && (
+                  <div className="col-span-2">
+                    <span className="block text-slate-500">Observaciones</span>
+                    <span className="text-slate-700">{selectedRepactacion.observaciones}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              {selectedRepactacion.estado === 'activo' && (
+                <div className="pt-4 border-t border-slate-200">
+                  <PermissionGate entity="repactaciones" action="delete">
+                    <Button
+                      variant="destructive"
+                      className="w-full"
+                      onClick={() => {
+                        setCancelingId(selectedRepactacion.id);
+                        setCancelConfirmOpen(true);
+                        setSelectedRepactacion(null);
+                      }}
+                    >
+                      <X className="h-4 w-4 mr-2" />
+                      Cancelar Repactación
+                    </Button>
+                  </PermissionGate>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Create Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>

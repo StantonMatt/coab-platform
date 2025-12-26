@@ -30,6 +30,7 @@ import {
   StatusBadge,
   DeleteConfirmDialog,
   PermissionGate,
+  SortableHeader,
   useCanAccess,
 } from '@/components/admin';
 
@@ -126,6 +127,21 @@ export default function SubsidiosPage() {
   const [deleteSubsidio, setDeleteSubsidio] = useState<Subsidio | null>(null);
   const [formData, setFormData] = useState<SubsidioFormData>(initialFormData);
 
+  // Sort state
+  const [sortBy, setSortBy] = useState<string>('fechaInicio');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Sort handler
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDirection('desc');
+    }
+    setPage(1);
+  };
+
   // Assign modal state
   const [showAssign, setShowAssign] = useState(false);
   const [assignClienteId, setAssignClienteId] = useState('');
@@ -138,11 +154,14 @@ export default function SubsidiosPage() {
 
   // Fetch subsidios (types)
   const { data: subsidiosData, isLoading: loadingSubsidios } = useQuery<SubsidiosResponse>({
-    queryKey: ['admin-subsidios', page],
+    queryKey: ['admin-subsidios', page, sortBy, sortDirection],
     queryFn: async () => {
-      const res = await adminApiClient.get<SubsidiosResponse>(
-        `/admin/subsidios?page=${page}&limit=20`
-      );
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', '20');
+      params.append('sortBy', sortBy);
+      params.append('sortDirection', sortDirection);
+      const res = await adminApiClient.get<SubsidiosResponse>(`/admin/subsidios?${params}`);
       return res.data;
     },
     enabled: activeTab === 'tipos',

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Scissors, Plus, RefreshCcw, Search } from 'lucide-react';
+import { Scissors, Plus, Search, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,11 +23,14 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
+import { formatearPesos } from '@coab/utils';
 import {
   AdminLayout,
   DataTable,
+  StatusBadge,
   ConfirmDialog,
   PermissionGate,
+  SortableHeader,
   useCanAccess,
 } from '@/components/admin';
 
@@ -79,11 +82,15 @@ const emptyForm: CorteFormData = {
   montoCobrado: '',
 };
 
+const ESTADO_MAP: Record<string, { label: string; className: string }> = {
+  cortado: { label: 'Cortado', className: 'bg-red-100 text-red-700' },
+  repuesto: { label: 'Repuesto', className: 'bg-emerald-100 text-emerald-700' },
+  pendiente: { label: 'Pendiente', className: 'bg-amber-100 text-amber-700' },
+};
+
 export default function AdminCortesPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const _canCreate = useCanAccess('cortes_servicio', 'create');
-  void _canCreate; // For future use
   const canReposicion = useCanAccess('cortes_servicio', 'authorize_reposicion');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -92,17 +99,37 @@ export default function AdminCortesPage() {
   const [estadoFilter, setEstadoFilter] = useState('');
   const [search, setSearch] = useState('');
 
+  // Sort state
+  const [sortBy, setSortBy] = useState<string>('fechaCorte');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Detail modal state
+  const [selectedCorte, setSelectedCorte] = useState<CorteServicio | null>(null);
+
   // Reposicion state
   const [reposingCorte, setReposingCorte] = useState<CorteServicio | null>(null);
 
+  // Sort handler
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDirection('desc');
+    }
+    setPage(1);
+  };
+
   const { data, isLoading } = useQuery<CortesResponse>({
-    queryKey: ['admin', 'cortes', page, estadoFilter, search],
+    queryKey: ['admin', 'cortes', page, estadoFilter, search, sortBy, sortDirection],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('limit', '20');
       if (estadoFilter) params.append('estado', estadoFilter);
       if (search) params.append('search', search);
+      params.append('sortBy', sortBy);
+      params.append('sortDirection', sortDirection);
       const res = await adminApiClient.get(`/admin/cortes?${params}`);
       return res.data;
     },
@@ -140,6 +167,7 @@ export default function AdminCortesPage() {
       toast({ title: 'Servicio repuesto', description: 'El servicio ha sido repuesto exitosamente.' });
       queryClient.invalidateQueries({ queryKey: ['admin', 'cortes'] });
       setReposingCorte(null);
+      setSelectedCorte(null);
     },
     onError: (error: any) => {
       toast({
@@ -160,28 +188,18 @@ export default function AdminCortesPage() {
     createMutation.mutate(formData);
   };
 
-  const getEstadoBadge = (estado: string) => {
-    const styles: Record<string, string> = {
-      cortado: 'bg-red-100 text-red-700',
-      repuesto: 'bg-green-100 text-green-700',
-      pendiente: 'bg-yellow-100 text-yellow-700',
-    };
-    const labels: Record<string, string> = {
-      cortado: 'Cortado',
-      repuesto: 'Repuesto',
-      pendiente: 'Pendiente',
-    };
-    return (
-      <span className={`px-2 py-1 text-xs rounded-full ${styles[estado] || 'bg-slate-100'}`}>
-        {labels[estado] || estado}
-      </span>
-    );
-  };
-
   const columns = [
     {
       key: 'cliente',
-      header: 'Cliente',
+      header: (
+        <SortableHeader
+          column="cliente"
+          label="Cliente"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (c: CorteServicio) => (
         <div>
           <p className="font-medium text-slate-900">
@@ -193,57 +211,53 @@ export default function AdminCortesPage() {
     },
     {
       key: 'fechaCorte',
-      header: 'Fecha Corte',
-      className: 'hidden sm:table-cell',
-      headerClassName: 'hidden sm:table-cell',
+      header: (
+        <SortableHeader
+          column="fechaCorte"
+          label="Fecha Corte"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (c: CorteServicio) =>
         c.fechaCorte ? format(new Date(c.fechaCorte), 'dd/MM/yyyy', { locale: es }) : '-',
     },
     {
       key: 'motivoCorte',
       header: 'Motivo',
-      className: 'hidden md:table-cell',
-      headerClassName: 'hidden md:table-cell',
       render: (c: CorteServicio) => (
         <span className="text-sm text-slate-600">{c.motivoCorte || '-'}</span>
       ),
     },
     {
       key: 'estado',
-      header: 'Estado',
-      render: (c: CorteServicio) => getEstadoBadge(c.estado),
+      header: (
+        <SortableHeader
+          column="estado"
+          label="Estado"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
+      render: (c: CorteServicio) => (
+        <StatusBadge status={c.estado} statusMap={ESTADO_MAP} />
+      ),
     },
     {
       key: 'fechaReposicion',
-      header: 'Reposición',
-      className: 'hidden lg:table-cell',
-      headerClassName: 'hidden lg:table-cell',
+      header: (
+        <SortableHeader
+          column="fechaReposicion"
+          label="Reposición"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (c: CorteServicio) =>
         c.fechaReposicion ? format(new Date(c.fechaReposicion), 'dd/MM/yyyy', { locale: es }) : '-',
-    },
-    {
-      key: 'acciones',
-      header: 'Acciones',
-      className: 'text-right',
-      headerClassName: 'text-right',
-      render: (c: CorteServicio) => (
-        <div className="flex justify-end gap-1">
-          {c.estado === 'cortado' && canReposicion && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                setReposingCorte(c);
-              }}
-              className="text-green-600 hover:text-green-700"
-            >
-              <RefreshCcw className="h-4 w-4 mr-1" />
-              Reponer
-            </Button>
-          )}
-        </div>
-      ),
     },
   ];
 
@@ -301,6 +315,7 @@ export default function AdminCortesPage() {
         isLoading={isLoading}
         emptyMessage="No hay cortes de servicio registrados"
         emptyIcon={<Scissors className="h-12 w-12 text-slate-300" />}
+        onRowClick={(corte) => setSelectedCorte(corte)}
         pagination={
           data?.pagination && {
             page: data.pagination.page,
@@ -310,6 +325,92 @@ export default function AdminCortesPage() {
           }
         }
       />
+
+      {/* Detail Modal */}
+      <Dialog open={!!selectedCorte} onOpenChange={() => setSelectedCorte(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Detalle del Corte</DialogTitle>
+          </DialogHeader>
+          {selectedCorte && (
+            <div className="space-y-4">
+              {/* Client Info */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-medium text-slate-900 block text-lg">
+                    {selectedCorte.cliente?.nombre || `Cliente #${selectedCorte.clienteId}`}
+                  </span>
+                  <span className="text-sm text-slate-500">
+                    N° Cliente: {selectedCorte.numeroCliente}
+                  </span>
+                </div>
+                <StatusBadge status={selectedCorte.estado} statusMap={ESTADO_MAP} />
+              </div>
+
+              {/* Details Grid */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="block text-slate-500">Fecha de Corte</span>
+                  <span className="font-medium">
+                    {selectedCorte.fechaCorte
+                      ? format(new Date(selectedCorte.fechaCorte), 'dd/MM/yyyy', { locale: es })
+                      : '-'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-slate-500">Motivo</span>
+                  <span className="font-medium">{selectedCorte.motivoCorte}</span>
+                </div>
+                {selectedCorte.fechaReposicion && (
+                  <div>
+                    <span className="block text-slate-500">Fecha de Reposición</span>
+                    <span className="font-medium">
+                      {format(new Date(selectedCorte.fechaReposicion), 'dd/MM/yyyy', { locale: es })}
+                    </span>
+                  </div>
+                )}
+                {selectedCorte.montoCobrado && (
+                  <div>
+                    <span className="block text-slate-500">Monto Cobrado</span>
+                    <span className="font-medium">{formatearPesos(selectedCorte.montoCobrado)}</span>
+                  </div>
+                )}
+                {selectedCorte.autorizadoCortePor && (
+                  <div className="col-span-2">
+                    <span className="block text-slate-500">Autorizado por</span>
+                    <span className="font-medium">{selectedCorte.autorizadoCortePor}</span>
+                  </div>
+                )}
+                {selectedCorte.autorizadoReposicionPor && (
+                  <div className="col-span-2">
+                    <span className="block text-slate-500">Reposición autorizada por</span>
+                    <span className="font-medium">{selectedCorte.autorizadoReposicionPor}</span>
+                  </div>
+                )}
+                {selectedCorte.observaciones && (
+                  <div className="col-span-2">
+                    <span className="block text-slate-500">Observaciones</span>
+                    <span className="text-slate-700">{selectedCorte.observaciones}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              {selectedCorte.estado === 'cortado' && canReposicion && (
+                <div className="pt-4 border-t border-slate-200">
+                  <Button
+                    onClick={() => setReposingCorte(selectedCorte)}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    <RefreshCcw className="h-4 w-4 mr-2" />
+                    Reponer Servicio
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Create Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>

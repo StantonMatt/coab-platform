@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { AdminLayout, DataTable, PermissionGate } from '@/components/admin';
+import { AdminLayout, DataTable, StatusBadge, PermissionGate, SortableHeader } from '@/components/admin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -53,10 +53,30 @@ export default function AdminDescuentosPage() {
   const [applyingToCliente, setApplyingToCliente] = useState<{ descuentoId: number; clienteId: string } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<Descuento | null>(null);
 
+  // Sort state
+  const [sortBy, setSortBy] = useState<string>('fechaCreacion');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Detail modal state
+  const [selectedDescuento, setSelectedDescuento] = useState<Descuento | null>(null);
+
+  // Sort handler
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDirection('desc');
+    }
+  };
+
   const { data: descuentos, isLoading } = useQuery({
-    queryKey: ['admin', 'descuentos'],
+    queryKey: ['admin', 'descuentos', sortBy, sortDirection],
     queryFn: async () => {
-      const res = await adminApi.get('/admin/descuentos');
+      const params = new URLSearchParams();
+      params.append('sortBy', sortBy);
+      params.append('sortDirection', sortDirection);
+      const res = await adminApi.get(`/admin/descuentos?${params}`);
       return res.data.descuentos as Descuento[];
     },
   });

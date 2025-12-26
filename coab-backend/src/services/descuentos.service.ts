@@ -20,10 +20,33 @@ function transformDescuento(d: any) {
   };
 }
 
-export async function getAllDescuentos(page: number = 1, limit: number = 50) {
+export async function getAllDescuentos(
+  page: number = 1,
+  limit: number = 50,
+  sortBy: 'nombre' | 'tipo' | 'valor' | 'fechaCreacion' = 'fechaCreacion',
+  sortDirection: 'asc' | 'desc' = 'desc'
+) {
   const skip = (page - 1) * limit;
+
+  let orderBy: any;
+  switch (sortBy) {
+    case 'nombre':
+      orderBy = { nombre: sortDirection };
+      break;
+    case 'tipo':
+      orderBy = { tipo_descuento: sortDirection };
+      break;
+    case 'valor':
+      orderBy = { valor: sortDirection };
+      break;
+    case 'fechaCreacion':
+    default:
+      orderBy = { fecha_creacion: sortDirection };
+      break;
+  }
+
   const [descuentos, total] = await Promise.all([
-    prisma.descuentos.findMany({ orderBy: { fecha_creacion: 'desc' }, skip, take: limit }),
+    prisma.descuentos.findMany({ orderBy, skip, take: limit }),
     prisma.descuentos.count(),
   ]);
   return {

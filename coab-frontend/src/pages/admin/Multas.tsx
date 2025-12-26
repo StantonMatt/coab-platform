@@ -55,6 +55,9 @@ export default function MultasPage() {
   const [sortBy, setSortBy] = useState<string>('numeroCliente');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
+  // Detail modal state
+  const [selectedMulta, setSelectedMulta] = useState<Multa | null>(null);
+
   const [clienteId, setClienteId] = useState('');
   const [monto, setMonto] = useState('');
   const [motivo, setMotivo] = useState('');
@@ -227,24 +230,6 @@ export default function MultasPage() {
         );
       },
     },
-    {
-      key: 'acciones',
-      header: '',
-      render: (m: Multa) => (
-        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-          {canEdit && m.estado !== 'cancelada' && (
-            <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(m)}>
-              <Pencil className="h-4 w-4" />
-            </Button>
-          )}
-          {canCancel && m.estado !== 'cancelada' && (
-            <Button variant="ghost" size="sm" onClick={() => setCancelMulta(m)} className="text-red-600">
-              <XCircle className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      ),
-    },
   ];
 
   return (
@@ -268,6 +253,7 @@ export default function MultasPage() {
         isLoading={isLoading}
         emptyMessage="No hay multas"
         emptyIcon={<AlertTriangle className="h-12 w-12 text-slate-300" />}
+        onRowClick={(multa) => setSelectedMulta(multa)}
         pagination={
           data?.pagination && {
             page: data.pagination.page,
@@ -277,6 +263,92 @@ export default function MultasPage() {
           }
         }
       />
+
+      {/* Detail Modal */}
+      <Dialog open={!!selectedMulta} onOpenChange={() => setSelectedMulta(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Detalle de Multa</DialogTitle>
+          </DialogHeader>
+          {selectedMulta && (
+            <div className="space-y-4">
+              {/* Amount and Status */}
+              <div className="flex items-center justify-between">
+                <span className="text-2xl font-bold text-red-600">
+                  {formatearPesos(selectedMulta.monto)}
+                </span>
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${estadoStyles[selectedMulta.estado]?.className}`}>
+                  {estadoStyles[selectedMulta.estado]?.label}
+                </span>
+              </div>
+
+              {/* Client Info */}
+              {selectedMulta.cliente && (
+                <div className="p-3 bg-slate-50 rounded-lg">
+                  <p className="font-medium text-slate-900">{selectedMulta.cliente.nombre}</p>
+                  <p className="text-sm text-slate-500">N° Cliente: {selectedMulta.cliente.numeroCliente}</p>
+                </div>
+              )}
+
+              {/* Details Grid */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="block text-slate-500">Motivo</span>
+                  <span className="font-medium">{selectedMulta.motivo}</span>
+                </div>
+                {selectedMulta.periodoDesde && (
+                  <div>
+                    <span className="block text-slate-500">Período</span>
+                    <span className="font-medium capitalize">{formatPeriodo(selectedMulta.periodoDesde)}</span>
+                  </div>
+                )}
+                {selectedMulta.descripcion && (
+                  <div className="col-span-2">
+                    <span className="block text-slate-500">Descripción</span>
+                    <span className="text-slate-700">{selectedMulta.descripcion}</span>
+                  </div>
+                )}
+                <div>
+                  <span className="block text-slate-500">Fecha Creación</span>
+                  <span className="font-medium">
+                    {format(new Date(selectedMulta.fechaCreacion), 'dd/MM/yyyy', { locale: es })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Actions */}
+              {selectedMulta.estado !== 'cancelada' && (canEdit || canCancel) && (
+                <div className="pt-4 border-t border-slate-200 flex gap-2">
+                  {canEdit && (
+                    <Button
+                      onClick={() => {
+                        handleOpenEdit(selectedMulta);
+                        setSelectedMulta(null);
+                      }}
+                      className="flex-1"
+                    >
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Editar
+                    </Button>
+                  )}
+                  {canCancel && (
+                    <Button
+                      variant="destructive"
+                      onClick={() => {
+                        setCancelMulta(selectedMulta);
+                        setSelectedMulta(null);
+                      }}
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Cancelar
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="sm:max-w-md">

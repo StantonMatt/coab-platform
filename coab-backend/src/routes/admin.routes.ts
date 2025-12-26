@@ -96,7 +96,9 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         query.q,
         query.page,
         query.limit,
-        query.cursor
+        query.cursor,
+        query.sortBy,
+        query.sortDirection
       );
       return result;
     } catch (error: any) {
@@ -790,6 +792,8 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         tipoPago: z.string().optional(),
         estado: z.string().optional(),
         q: z.string().optional(),
+        sortBy: z.enum(['fecha', 'monto', 'cliente', 'estado']).optional().default('fecha'),
+        sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
       });
 
       const query = querySchema.parse(request.query);
@@ -802,6 +806,8 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         tipoPago: query.tipoPago,
         estado: query.estado,
         search: query.q,
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
       });
 
       return result;
@@ -941,10 +947,12 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         .object({
           page: z.coerce.number().int().min(1).default(1),
           limit: z.coerce.number().int().min(1).max(100).default(50),
+          sortBy: z.enum(['nombre', 'cantidadDirecciones', 'fechaCreacion']).optional().default('nombre'),
+          sortDirection: z.enum(['asc', 'desc']).optional().default('asc'),
         })
         .parse(request.query);
 
-      const result = await rutasService.getAllRutas(query.page, query.limit);
+      const result = await rutasService.getAllRutas(query.page, query.limit, query.sortBy, query.sortDirection);
       return result;
     } catch (error: any) {
       if (error instanceof ZodError) {
@@ -1203,10 +1211,12 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         .object({
           page: z.coerce.number().int().min(1).default(1),
           limit: z.coerce.number().int().min(1).max(100).default(50),
+          sortBy: z.enum(['fechaInicio', 'cargoFijo', 'costoM3']).optional().default('fechaInicio'),
+          sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
         })
         .parse(request.query);
 
-      const result = await tarifasService.getAllTarifas(query.page, query.limit);
+      const result = await tarifasService.getAllTarifas(query.page, query.limit, query.sortBy, query.sortDirection);
       return result;
     } catch (error: any) {
       if (error instanceof ZodError) {
@@ -1402,10 +1412,12 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         .object({
           page: z.coerce.number().int().min(1).default(1),
           limit: z.coerce.number().int().min(1).max(100).default(50),
+          sortBy: z.enum(['porcentaje', 'limiteM3', 'fechaInicio', 'estado']).optional().default('fechaInicio'),
+          sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
         })
         .parse(request.query);
 
-      const result = await subsidiosService.getAllSubsidios(query.page, query.limit);
+      const result = await subsidiosService.getAllSubsidios(query.page, query.limit, query.sortBy, query.sortDirection);
       return result;
     } catch (error: any) {
       if (error instanceof ZodError) {
@@ -1965,11 +1977,16 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
           limit: z.coerce.number().int().min(1).max(100).default(50),
           estado: z.string().optional(),
           search: z.string().optional(),
+          sortBy: z.enum(['numeroSerie', 'cliente', 'estado', 'fechaInstalacion']).optional().default('fechaInstalacion'),
+          sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
         })
         .parse(request.query);
 
       const result = await medidoresService.getAllMedidores(query.page, query.limit, {
         estado: query.estado,
+        search: query.search,
+        sortBy: query.sortBy,
+        sortDirection: query.sortDirection,
         search: query.search,
       });
       return result;
@@ -2505,8 +2522,13 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/descuentos', async (request, reply) => {
     try {
-      const query = z.object({ page: z.coerce.number().default(1), limit: z.coerce.number().default(50) }).parse(request.query);
-      return await descuentosService.getAllDescuentos(query.page, query.limit);
+      const query = z.object({
+        page: z.coerce.number().default(1),
+        limit: z.coerce.number().default(50),
+        sortBy: z.enum(['nombre', 'tipo', 'valor', 'fechaCreacion']).optional().default('fechaCreacion'),
+        sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
+      }).parse(request.query);
+      return await descuentosService.getAllDescuentos(query.page, query.limit, query.sortBy, query.sortDirection);
     } catch (error: any) {
       fastify.log.error(error);
       return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener descuentos' } });
@@ -2560,8 +2582,15 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/cortes', async (request, reply) => {
     try {
-      const query = z.object({ page: z.coerce.number().default(1), limit: z.coerce.number().default(50), estado: z.string().optional() }).parse(request.query);
-      return await cortesService.getAllCortes(query.page, query.limit, query.estado);
+      const query = z.object({
+        page: z.coerce.number().default(1),
+        limit: z.coerce.number().default(50),
+        estado: z.string().optional(),
+        search: z.string().optional(),
+        sortBy: z.enum(['cliente', 'fechaCorte', 'estado', 'fechaReposicion']).optional().default('fechaCorte'),
+        sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
+      }).parse(request.query);
+      return await cortesService.getAllCortes(query.page, query.limit, query.estado, query.search, query.sortBy, query.sortDirection);
     } catch (error: any) {
       fastify.log.error(error);
       return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener cortes' } });
@@ -2626,8 +2655,14 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/repactaciones', async (request, reply) => {
     try {
-      const query = z.object({ page: z.coerce.number().default(1), limit: z.coerce.number().default(50), estado: z.string().optional() }).parse(request.query);
-      return await repactacionesService.getAllRepactaciones(query.page, query.limit, query.estado);
+      const query = z.object({
+        page: z.coerce.number().default(1),
+        limit: z.coerce.number().default(50),
+        estado: z.string().optional(),
+        sortBy: z.enum(['cliente', 'monto', 'fechaInicio', 'estado']).optional().default('fechaInicio'),
+        sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
+      }).parse(request.query);
+      return await repactacionesService.getAllRepactaciones(query.page, query.limit, query.estado, query.sortBy, query.sortDirection);
     } catch (error: any) {
       fastify.log.error(error);
       return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });

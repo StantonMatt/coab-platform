@@ -22,12 +22,34 @@ function transformSubsidio(subsidio: any) {
 /**
  * Get all subsidios with pagination
  */
-export async function getAllSubsidios(page: number = 1, limit: number = 50) {
+export async function getAllSubsidios(
+  page: number = 1,
+  limit: number = 50,
+  sortBy: 'porcentaje' | 'limiteM3' | 'fechaInicio' | 'estado' = 'fechaInicio',
+  sortDirection: 'asc' | 'desc' = 'desc'
+) {
   const skip = (page - 1) * limit;
+
+  let orderBy: any;
+  switch (sortBy) {
+    case 'porcentaje':
+      orderBy = { porcentaje: sortDirection };
+      break;
+    case 'limiteM3':
+      orderBy = { limite_m3: sortDirection };
+      break;
+    case 'estado':
+      orderBy = { estado: sortDirection };
+      break;
+    case 'fechaInicio':
+    default:
+      orderBy = { fecha_inicio: sortDirection };
+      break;
+  }
 
   const [subsidios, total] = await Promise.all([
     prisma.subsidios.findMany({
-      orderBy: { fecha_inicio: 'desc' },
+      orderBy,
       skip,
       take: limit,
       include: {

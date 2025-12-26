@@ -4,12 +4,31 @@ import type { CreateRutaInput, UpdateRutaInput } from '../schemas/rutas.schema.j
 /**
  * Get all rutas with optional pagination
  */
-export async function getAllRutas(page: number = 1, limit: number = 50) {
+export async function getAllRutas(
+  page: number = 1,
+  limit: number = 50,
+  sortBy: 'nombre' | 'cantidadDirecciones' | 'fechaCreacion' = 'nombre',
+  sortDirection: 'asc' | 'desc' = 'asc'
+) {
   const skip = (page - 1) * limit;
+
+  let orderBy: any;
+  switch (sortBy) {
+    case 'cantidadDirecciones':
+      orderBy = { direcciones: { _count: sortDirection } };
+      break;
+    case 'fechaCreacion':
+      orderBy = { fecha_creacion: sortDirection };
+      break;
+    case 'nombre':
+    default:
+      orderBy = { nombre: sortDirection };
+      break;
+  }
 
   const [rutas, total] = await Promise.all([
     prisma.rutas.findMany({
-      orderBy: { nombre: 'asc' },
+      orderBy,
       skip,
       take: limit,
       include: {

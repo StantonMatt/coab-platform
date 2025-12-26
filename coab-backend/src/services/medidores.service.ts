@@ -50,9 +50,16 @@ function transformMedidor(medidor: any) {
 export async function getAllMedidores(
   page: number = 1,
   limit: number = 50,
-  filters?: { estado?: string; search?: string }
+  filters?: {
+    estado?: string;
+    search?: string;
+    sortBy?: 'numeroSerie' | 'cliente' | 'estado' | 'fechaInstalacion';
+    sortDirection?: 'asc' | 'desc';
+  }
 ) {
   const skip = (page - 1) * limit;
+  const sortBy = filters?.sortBy || 'fechaInstalacion';
+  const sortDirection = filters?.sortDirection || 'desc';
 
   const where: any = {};
 
@@ -80,10 +87,28 @@ export async function getAllMedidores(
     ];
   }
 
+  // Build orderBy based on sortBy parameter
+  let orderBy: any;
+  switch (sortBy) {
+    case 'numeroSerie':
+      orderBy = { numero_serie: sortDirection };
+      break;
+    case 'cliente':
+      orderBy = { direccion: { cliente: { primer_apellido: sortDirection } } };
+      break;
+    case 'estado':
+      orderBy = { estado: sortDirection };
+      break;
+    case 'fechaInstalacion':
+    default:
+      orderBy = { fecha_instalacion: sortDirection };
+      break;
+  }
+
   const [medidores, total] = await Promise.all([
     prisma.medidores.findMany({
       where,
-      orderBy: { fecha_creacion: 'desc' },
+      orderBy,
       skip,
       take: limit,
       include: {

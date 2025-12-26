@@ -29,6 +29,7 @@ import {
   DataTable,
   DeleteConfirmDialog,
   PermissionGate,
+  SortableHeader,
   useCanAccess,
 } from '@/components/admin';
 
@@ -86,6 +87,21 @@ export default function RutasPage() {
   const [editingRuta, setEditingRuta] = useState<Ruta | null>(null);
   const [deleteRuta, setDeleteRuta] = useState<Ruta | null>(null);
 
+  // Sort state
+  const [sortBy, setSortBy] = useState<string>('nombre');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // Sort handler
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDirection('asc');
+    }
+    setPage(1);
+  };
+
   // Form state
   const [nombre, setNombre] = useState('');
   const [descripcion, setDescripcion] = useState('');
@@ -99,11 +115,14 @@ export default function RutasPage() {
 
   // Fetch rutas
   const { data, isLoading } = useQuery<RutasResponse>({
-    queryKey: ['admin-rutas', page],
+    queryKey: ['admin-rutas', page, sortBy, sortDirection],
     queryFn: async () => {
-      const res = await adminApiClient.get<RutasResponse>(
-        `/admin/rutas?page=${page}&limit=20`
-      );
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', '20');
+      params.append('sortBy', sortBy);
+      params.append('sortDirection', sortDirection);
+      const res = await adminApiClient.get<RutasResponse>(`/admin/rutas?${params}`);
       return res.data;
     },
   });

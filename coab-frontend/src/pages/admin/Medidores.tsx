@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Gauge, Plus, Pencil, Trash2, Search, Eye, MapPin, Check } from 'lucide-react';
+import { Gauge, Plus, Pencil, Trash2, Search, MapPin, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -26,8 +26,10 @@ import adminApiClient from '@/lib/adminApi';
 import {
   AdminLayout,
   DataTable,
+  StatusBadge,
   DeleteConfirmDialog,
   PermissionGate,
+  SortableHeader,
   useCanAccess,
 } from '@/components/admin';
 
@@ -115,6 +117,13 @@ export default function MedidoresPage() {
   const [deleteMedidor, setDeleteMedidor] = useState<Medidor | null>(null);
   const [formData, setFormData] = useState<MedidorFormData>(initialFormData);
 
+  // Sort state
+  const [sortBy, setSortBy] = useState<string>('fechaInstalacion');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Detail modal state
+  const [selectedMedidor, setSelectedMedidor] = useState<Medidor | null>(null);
+
   // Address search state
   const [addressSearch, setAddressSearch] = useState('');
   const [debouncedAddressSearch, setDebouncedAddressSearch] = useState('');
@@ -138,6 +147,17 @@ export default function MedidoresPage() {
     }
   }, [showForm, editingMedidor]);
 
+  // Sort handler
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDirection('desc');
+    }
+    setPage(1);
+  };
+
   // Search addresses query
   const { data: addressResults, isLoading: searchingAddresses } = useQuery<{
     direcciones: DireccionSearchResult[];
@@ -154,13 +174,15 @@ export default function MedidoresPage() {
 
   // Fetch medidores
   const { data, isLoading } = useQuery<MedidoresResponse>({
-    queryKey: ['admin-medidores', page, search, estadoFilter],
+    queryKey: ['admin-medidores', page, search, estadoFilter, sortBy, sortDirection],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append('page', page.toString());
       params.append('limit', '20');
       if (search) params.append('search', search);
       if (estadoFilter) params.append('estado', estadoFilter);
+      params.append('sortBy', sortBy);
+      params.append('sortDirection', sortDirection);
       
       const res = await adminApiClient.get<MedidoresResponse>(`/admin/medidores?${params}`);
       return res.data;
@@ -318,7 +340,15 @@ export default function MedidoresPage() {
   const columns = [
     {
       key: 'numeroSerie',
-      header: 'Serie / Info',
+      header: (
+        <SortableHeader
+          column="numeroSerie"
+          label="Serie / Info"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (medidor: Medidor) => (
         <div>
           <span className="font-medium text-slate-900">
@@ -334,7 +364,15 @@ export default function MedidoresPage() {
     },
     {
       key: 'direccion',
-      header: 'Cliente / Dirección',
+      header: (
+        <SortableHeader
+          column="cliente"
+          label="Cliente / Dirección"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (medidor: Medidor) => (
         <div className="text-sm">
           {medidor.direccion?.clienteNombre && (
@@ -369,33 +407,27 @@ export default function MedidoresPage() {
     },
     {
       key: 'estado',
-      header: 'Estado',
-      className: 'hidden sm:table-cell',
-      headerClassName: 'hidden sm:table-cell',
+      header: (
+        <SortableHeader
+          column="estado"
+          label="Estado"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (medidor: Medidor) => {
-        const estadoStyles: Record<string, string> = {
-          activo: 'bg-emerald-100 text-emerald-700',
-          funcionando: 'bg-emerald-100 text-emerald-700',
-          inactivo: 'bg-slate-100 text-slate-600',
-          averiado: 'bg-red-100 text-red-700',
-        };
-        const estadoLabels: Record<string, string> = {
-          activo: 'Funcionando',
-          funcionando: 'Funcionando',
-          inactivo: 'Inactivo',
-          averiado: 'Averiado',
+        const estadoMap: Record<string, { label: string; className: string }> = {
+          activo: { label: 'Funcionando', className: 'bg-emerald-100 text-emerald-700' },
+          funcionando: { label: 'Funcionando', className: 'bg-emerald-100 text-emerald-700' },
+          inactivo: { label: 'Inactivo', className: 'bg-slate-100 text-slate-600' },
+          averiado: { label: 'Averiado', className: 'bg-red-100 text-red-700' },
         };
         const isRetirado = !!medidor.fechaRetiro;
         
         return (
           <div className="flex flex-wrap gap-1">
-            <span
-              className={`px-2 py-1 text-xs rounded-full font-medium ${
-                estadoStyles[medidor.estado] || 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              {estadoLabels[medidor.estado] || medidor.estado}
-            </span>
+            <StatusBadge status={medidor.estado} statusMap={estadoMap} />
             {isRetirado && (
               <span className="px-2 py-1 text-xs rounded-full font-medium bg-amber-100 text-amber-700">
                 Retirado
@@ -408,54 +440,14 @@ export default function MedidoresPage() {
     {
       key: 'mostrarEnRuta',
       header: 'En Ruta',
-      className: 'text-center hidden lg:table-cell',
-      headerClassName: 'text-center hidden lg:table-cell',
       render: (medidor: Medidor) => (
-        <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
+        <div className="flex" onClick={(e) => e.stopPropagation()}>
           <Switch
             checked={medidor.mostrarEnRuta}
             onCheckedChange={() => toggleRutaMutation.mutate(medidor.id)}
             disabled={toggleRutaMutation.isPending}
             className="data-[state=checked]:bg-blue-600"
           />
-        </div>
-      ),
-    },
-    {
-      key: 'acciones',
-      header: 'Acciones',
-      className: 'text-right',
-      headerClassName: 'text-right',
-      render: (medidor: Medidor) => (
-        <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(`/admin/medidores/${medidor.id}`)}
-            className="text-slate-600 hover:text-blue-600"
-          >
-            <Eye className="h-4 w-4" />
-          </Button>
-          {canEdit && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleOpenEdit(medidor)}
-              className="text-slate-600 hover:text-blue-600"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-          )}
-          {canDelete && !medidor.ultimaLectura && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setDeleteMedidor(medidor)}
-              className="text-slate-600 hover:text-red-600"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
         </div>
       ),
     },
@@ -516,6 +508,7 @@ export default function MedidoresPage() {
         isLoading={isLoading}
         emptyMessage="No hay medidores registrados"
         emptyIcon={<Gauge className="h-12 w-12 text-slate-300" />}
+        onRowClick={(medidor) => setSelectedMedidor(medidor)}
         pagination={
           data?.pagination && {
             page: data.pagination.page,
@@ -525,6 +518,125 @@ export default function MedidoresPage() {
           }
         }
       />
+
+      {/* Detail Modal */}
+      <Dialog open={!!selectedMedidor} onOpenChange={() => setSelectedMedidor(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Detalle del Medidor</DialogTitle>
+          </DialogHeader>
+          {selectedMedidor && (
+            <div className="space-y-4">
+              {/* Serie and Status */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-medium text-slate-900 text-lg">
+                    {selectedMedidor.numeroSerie || 'Sin serie'}
+                  </span>
+                  {(selectedMedidor.marca || selectedMedidor.modelo) && (
+                    <p className="text-sm text-slate-500">
+                      {[selectedMedidor.marca, selectedMedidor.modelo].filter(Boolean).join(' - ')}
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-1">
+                  <StatusBadge
+                    status={selectedMedidor.estado}
+                    statusMap={{
+                      activo: { label: 'Funcionando', className: 'bg-emerald-100 text-emerald-700' },
+                      averiado: { label: 'Averiado', className: 'bg-red-100 text-red-700' },
+                    }}
+                  />
+                  {selectedMedidor.fechaRetiro && (
+                    <span className="px-2 py-1 text-xs rounded-full font-medium bg-amber-100 text-amber-700">
+                      Retirado
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Client/Address Info */}
+              {selectedMedidor.direccion && (
+                <div className="p-3 bg-slate-50 rounded-lg">
+                  <p className="font-medium text-slate-900">
+                    {selectedMedidor.direccion.clienteNombre}
+                  </p>
+                  <p className="text-sm text-slate-500">
+                    N° {selectedMedidor.direccion.numeroCliente} • {selectedMedidor.direccion.direccion}
+                  </p>
+                </div>
+              )}
+
+              {/* Details Grid */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {selectedMedidor.fechaInstalacion && (
+                  <div>
+                    <span className="block text-slate-500">Fecha Instalación</span>
+                    <span className="font-medium">
+                      {format(new Date(selectedMedidor.fechaInstalacion), 'dd/MM/yyyy', { locale: es })}
+                    </span>
+                  </div>
+                )}
+                {selectedMedidor.fechaRetiro && (
+                  <div>
+                    <span className="block text-slate-500">Fecha Retiro</span>
+                    <span className="font-medium">
+                      {format(new Date(selectedMedidor.fechaRetiro), 'dd/MM/yyyy', { locale: es })}
+                    </span>
+                  </div>
+                )}
+                <div>
+                  <span className="block text-slate-500">Lectura Inicial</span>
+                  <span className="font-medium">{selectedMedidor.lecturaInicial.toLocaleString()}</span>
+                </div>
+                {selectedMedidor.ultimaLectura && (
+                  <div>
+                    <span className="block text-slate-500">Última Lectura</span>
+                    <span className="font-medium">
+                      {selectedMedidor.ultimaLectura.lectura.toLocaleString()}
+                      <span className="text-xs text-slate-400 ml-1">
+                        ({format(new Date(selectedMedidor.ultimaLectura.fecha), 'dd/MM/yy', { locale: es })})
+                      </span>
+                    </span>
+                  </div>
+                )}
+                <div>
+                  <span className="block text-slate-500">Mostrar en Ruta</span>
+                  <span className="font-medium">{selectedMedidor.mostrarEnRuta ? 'Sí' : 'No'}</span>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="pt-4 border-t border-slate-200 flex gap-2">
+                {canEdit && (
+                  <Button
+                    onClick={() => {
+                      handleOpenEdit(selectedMedidor);
+                      setSelectedMedidor(null);
+                    }}
+                    className="flex-1"
+                  >
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Editar
+                  </Button>
+                )}
+                {canDelete && !selectedMedidor.ultimaLectura && (
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      setDeleteMedidor(selectedMedidor);
+                      setSelectedMedidor(null);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Eliminar
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>

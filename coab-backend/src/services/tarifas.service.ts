@@ -34,12 +34,31 @@ function transformTarifa(tarifa: any) {
 /**
  * Get all tarifas with pagination
  */
-export async function getAllTarifas(page: number = 1, limit: number = 50) {
+export async function getAllTarifas(
+  page: number = 1,
+  limit: number = 50,
+  sortBy: 'fechaInicio' | 'cargoFijo' | 'costoM3' = 'fechaInicio',
+  sortDirection: 'asc' | 'desc' = 'desc'
+) {
   const skip = (page - 1) * limit;
+
+  let orderBy: any;
+  switch (sortBy) {
+    case 'cargoFijo':
+      orderBy = { cargo_fijo: sortDirection };
+      break;
+    case 'costoM3':
+      orderBy = { costo_m3_agua: sortDirection };
+      break;
+    case 'fechaInicio':
+    default:
+      orderBy = { fecha_inicio: sortDirection };
+      break;
+  }
 
   const [tarifas, total] = await Promise.all([
     prisma.tarifas.findMany({
-      orderBy: { fecha_inicio: 'desc' },
+      orderBy,
       skip,
       take: limit,
     }),

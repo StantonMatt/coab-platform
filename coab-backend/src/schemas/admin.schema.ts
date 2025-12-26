@@ -9,6 +9,8 @@ export const searchSchema = z.object({
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
   cursor: z.string().optional(),
+  sortBy: z.enum(['rut', 'nombre', 'numeroCliente', 'saldo']).optional().default('nombre'),
+  sortDirection: z.enum(['asc', 'desc']).optional().default('asc'),
 });
 
 /**

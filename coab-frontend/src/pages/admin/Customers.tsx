@@ -9,6 +9,7 @@ import {
   AdminLayout,
   DataTable,
   StatusBadge,
+  SortableHeader,
 } from '@/components/admin';
 
 interface Customer {
@@ -40,6 +41,8 @@ export default function CustomersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState<string>('nombre');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const navigate = useNavigate();
 
   // Check admin auth
@@ -60,12 +63,23 @@ export default function CustomersPage() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // Sort handler
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDirection('asc');
+    }
+    setPage(1);
+  };
+
   const {
     data: customersData,
     isLoading,
     error,
   } = useQuery<SearchResponse>({
-    queryKey: ['admin-customers', debouncedQuery, page],
+    queryKey: ['admin-customers', debouncedQuery, page, sortBy, sortDirection],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append('page', page.toString());
@@ -73,6 +87,8 @@ export default function CustomersPage() {
       if (debouncedQuery && debouncedQuery.length >= 2) {
         params.append('q', debouncedQuery);
       }
+      params.append('sortBy', sortBy);
+      params.append('sortDirection', sortDirection);
       const res = await adminApiClient.get<SearchResponse>(`/admin/clientes?${params}`);
       return res.data;
     },
@@ -81,7 +97,15 @@ export default function CustomersPage() {
   const columns = [
     {
       key: 'rut',
-      header: 'RUT',
+      header: (
+        <SortableHeader
+          column="rut"
+          label="RUT"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (customer: Customer) => (
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm text-slate-700">
@@ -94,8 +118,31 @@ export default function CustomersPage() {
       ),
     },
     {
+      key: 'numeroCliente',
+      header: (
+        <SortableHeader
+          column="numeroCliente"
+          label="N° Cliente"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
+      render: (customer: Customer) => (
+        <span className="font-mono text-sm text-slate-700">{customer.numeroCliente}</span>
+      ),
+    },
+    {
       key: 'nombre',
-      header: 'Nombre',
+      header: (
+        <SortableHeader
+          column="nombre"
+          label="Nombre"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (customer: Customer) => (
         <span className="font-medium text-slate-900">{customer.nombre}</span>
       ),
@@ -103,26 +150,21 @@ export default function CustomersPage() {
     {
       key: 'direccion',
       header: 'Dirección',
-      className: 'hidden md:table-cell',
-      headerClassName: 'hidden md:table-cell',
       render: (customer: Customer) => (
         <span className="text-sm text-slate-600">{customer.direccion || '-'}</span>
       ),
     },
     {
-      key: 'telefono',
-      header: 'Teléfono',
-      className: 'hidden lg:table-cell',
-      headerClassName: 'hidden lg:table-cell',
-      render: (customer: Customer) => (
-        <span className="text-sm text-slate-600">{customer.telefono || '-'}</span>
-      ),
-    },
-    {
       key: 'estado',
-      header: 'Estado',
-      className: 'text-center',
-      headerClassName: 'text-center',
+      header: (
+        <SortableHeader
+          column="saldo"
+          label="Estado"
+          sortBy={sortBy}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+        />
+      ),
       render: (customer: Customer) => (
         <StatusBadge
           status={customer.estadoCuenta === 'AL_DIA' ? 'activo' : 'pendiente'}

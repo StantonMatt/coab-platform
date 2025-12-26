@@ -32,7 +32,9 @@ export async function searchCustomers(
   query: string | undefined,
   page: number = 1,
   limit: number = 20,
-  cursor?: string
+  cursor?: string,
+  sortBy: 'rut' | 'nombre' | 'numeroCliente' | 'saldo' = 'nombre',
+  sortDirection: 'asc' | 'desc' = 'asc'
 ) {
   const skip = (page - 1) * limit;
 
@@ -54,6 +56,24 @@ export async function searchCustomers(
     ];
   }
 
+  // Build orderBy based on sortBy parameter
+  let orderBy: any;
+  switch (sortBy) {
+    case 'rut':
+      orderBy = { rut: sortDirection };
+      break;
+    case 'numeroCliente':
+      orderBy = { numero_cliente: sortDirection };
+      break;
+    case 'saldo':
+      orderBy = { estado_cuenta: sortDirection };
+      break;
+    case 'nombre':
+    default:
+      orderBy = [{ primer_apellido: sortDirection }, { primer_nombre: sortDirection }];
+      break;
+  }
+
   // Get total count and customers in parallel
   const [total, customers] = await Promise.all([
     prisma.clientes.count({ where: whereClause }),
@@ -61,7 +81,7 @@ export async function searchCustomers(
       where: whereClause,
       take: limit,
       skip,
-      orderBy: { primer_apellido: 'asc' },
+      orderBy,
       select: {
         id: true,
         rut: true,
@@ -730,8 +750,10 @@ export async function getAllPayments(options: {
   tipoPago?: string;
   estado?: string;
   search?: string;
+  sortBy?: 'fecha' | 'monto' | 'cliente' | 'estado';
+  sortDirection?: 'asc' | 'desc';
 }) {
-  const { page, limit, fechaDesde, fechaHasta, tipoPago, estado, search } = options;
+  const { page, limit, fechaDesde, fechaHasta, tipoPago, estado, search, sortBy = 'fecha', sortDirection = 'desc' } = options;
   const skip = (page - 1) * limit;
 
   // Build where clause
@@ -778,6 +800,24 @@ export async function getAllPayments(options: {
     ];
   }
 
+  // Build orderBy based on sortBy parameter
+  let orderBy: any;
+  switch (sortBy) {
+    case 'monto':
+      orderBy = { monto: sortDirection };
+      break;
+    case 'cliente':
+      orderBy = { cliente: { primer_apellido: sortDirection } };
+      break;
+    case 'estado':
+      orderBy = { estado: sortDirection };
+      break;
+    case 'fecha':
+    default:
+      orderBy = { fecha_pago: sortDirection };
+      break;
+  }
+
   // Execute queries in parallel
   const [pagos, total, aggregate] = await Promise.all([
     // Get paginated payments
@@ -796,7 +836,7 @@ export async function getAllPayments(options: {
           },
         },
       },
-      orderBy: { fecha_pago: 'desc' },
+      orderBy,
       skip,
       take: limit,
     }),

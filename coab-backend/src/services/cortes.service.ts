@@ -31,7 +31,9 @@ export async function getAllCortes(
   page: number = 1,
   limit: number = 50,
   estado?: string,
-  search?: string
+  search?: string,
+  sortBy: 'cliente' | 'fechaCorte' | 'estado' | 'fechaReposicion' = 'fechaCorte',
+  sortDirection: 'asc' | 'desc' = 'desc'
 ) {
   const skip = (page - 1) * limit;
 
@@ -53,10 +55,28 @@ export async function getAllCortes(
     ];
   }
 
+  // Build orderBy based on sortBy parameter
+  let orderBy: any;
+  switch (sortBy) {
+    case 'cliente':
+      orderBy = { clientes: { primer_apellido: sortDirection } };
+      break;
+    case 'estado':
+      orderBy = { estado: sortDirection };
+      break;
+    case 'fechaReposicion':
+      orderBy = { fecha_reposicion: sortDirection };
+      break;
+    case 'fechaCorte':
+    default:
+      orderBy = { fecha_corte: sortDirection };
+      break;
+  }
+
   const [cortes, total] = await Promise.all([
     prisma.cortes_servicio.findMany({
       where,
-      orderBy: { created_at: 'desc' },
+      orderBy,
       skip,
       take: limit,
       include: {
