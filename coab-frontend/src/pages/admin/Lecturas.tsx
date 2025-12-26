@@ -117,7 +117,7 @@ export default function LecturasPage() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   // Fetch available periods
-  const { data: periodosData } = useQuery({
+  const { data: periodosData, isLoading: isLoadingPeriodos } = useQuery({
     queryKey: ['admin', 'lecturas', 'periodos-disponibles'],
     queryFn: async () => {
       const response = await adminApiClient.get<{ periodos: PeriodoDisponible[] }>('/admin/lecturas/periodos-disponibles');
@@ -524,7 +524,7 @@ export default function LecturasPage() {
         columns={columns as any}
         data={(data?.lecturas || []) as any}
         keyExtractor={(lectura: any) => lectura.id}
-        isLoading={isLoading}
+        isLoading={isLoading || isLoadingPeriodos || !initializedFilters}
         emptyMessage="No hay lecturas registradas"
         emptyIcon={<FileText className="h-12 w-12 text-slate-300" />}
         onRowClick={handleRowClick as any}
