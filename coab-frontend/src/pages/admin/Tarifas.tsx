@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { DollarSign, Plus, Pencil, Trash2, Check } from 'lucide-react';
@@ -21,8 +21,8 @@ import {
   DeleteConfirmDialog,
   PermissionGate,
   SortableHeader,
-  useSortState,
   useCanAccess,
+  useAdminTable,
 } from '@/components/admin';
 
 interface Tarifa {
@@ -87,37 +87,26 @@ const initialFormData: TarifaFormData = {
 
 export default function TarifasPage() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const canEdit = useCanAccess('tarifas', 'edit');
   const canDelete = useCanAccess('tarifas', 'delete');
 
-  const [page, setPage] = useState(1);
+  // Use the admin table hook
+  const {
+    data: tarifas,
+    tableProps,
+    refetch,
+  } = useAdminTable<Tarifa>({
+    endpoint: '/admin/tarifas',
+    queryKey: 'admin-tarifas',
+    dataKey: 'tarifas',
+    defaultSort: { column: 'fechaInicio', direction: 'desc' },
+  });
+
   const [showForm, setShowForm] = useState(false);
   const [selectedTarifa, setSelectedTarifa] = useState<Tarifa | null>(null);
   const [editingTarifa, setEditingTarifa] = useState<Tarifa | null>(null);
   const [deleteTarifa, setDeleteTarifa] = useState<Tarifa | null>(null);
   const [formData, setFormData] = useState<TarifaFormData>(initialFormData);
-
-  // Use the sort hook
-  const { sortBy, sortDirection, handleSort } = useSortState({
-    defaultColumn: 'fechaInicio',
-    defaultDirection: 'desc',
-    onSortChange: () => setPage(1),
-  });
-
-  // Fetch tarifas
-  const { data, isLoading } = useQuery<TarifasResponse>({
-    queryKey: ['admin-tarifas', page, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (sortBy) params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      const res = await adminApiClient.get<TarifasResponse>(`/admin/tarifas?${params}`);
-      return res.data;
-    },
-  });
 
   // Create mutation
   const createMutation = useMutation({
@@ -127,7 +116,7 @@ export default function TarifasPage() {
     },
     onSuccess: () => {
       toast({ title: 'Tarifa creada', description: 'La tarifa se creó correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-tarifas'] });
+      refetch();
       handleCloseForm();
     },
     onError: (error: any) => {
@@ -147,7 +136,7 @@ export default function TarifasPage() {
     },
     onSuccess: () => {
       toast({ title: 'Tarifa actualizada', description: 'Los cambios se guardaron' });
-      queryClient.invalidateQueries({ queryKey: ['admin-tarifas'] });
+      refetch();
       handleCloseForm();
     },
     onError: (error: any) => {
@@ -167,7 +156,7 @@ export default function TarifasPage() {
     },
     onSuccess: () => {
       toast({ title: 'Tarifa eliminada', description: 'La tarifa se eliminó correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-tarifas'] });
+      refetch();
       setDeleteTarifa(null);
       setSelectedTarifa(null);
     },
@@ -334,21 +323,12 @@ export default function TarifasPage() {
     >
       <DataTable
         columns={columns}
-        data={data?.tarifas || []}
+        data={tarifas}
         keyExtractor={(tarifa) => tarifa.id}
-        isLoading={isLoading}
         emptyMessage="No hay tarifas registradas"
         emptyIcon={<DollarSign className="h-12 w-12 text-slate-300" />}
         onRowClick={(tarifa) => setSelectedTarifa(tarifa)}
-        pagination={
-          data?.pagination && {
-            page: data.pagination.page,
-            totalPages: data.pagination.totalPages,
-            total: data.pagination.total,
-            onPageChange: setPage,
-          }
-        }
-        sorting={{ sortBy, sortDirection, onSort: handleSort }}
+        {...tableProps}
       />
 
       {/* Detail Modal */}

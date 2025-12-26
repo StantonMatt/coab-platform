@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { FileText, Pencil, AlertCircle, Search, CheckCircle, MapPin, Gauge, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { FileText, Pencil, AlertCircle, Search, CheckCircle, MapPin, Gauge } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -25,7 +25,9 @@ import adminApiClient from '@/lib/adminApi';
 import {
   AdminLayout,
   DataTable,
+  SortableHeader,
   useCanAccess,
+  useAdminTable,
 } from '@/components/admin';
 
 interface Lectura {
@@ -68,15 +70,7 @@ interface Lectura {
   } | null;
 }
 
-interface LecturasResponse {
-  lecturas: Lectura[];
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
-}
+// Response type handled by useAdminTable
 
 interface LecturaContext {
   lecturaAnterior: {
@@ -94,9 +88,13 @@ interface LecturaContext {
 interface PeriodoDisponible {
   año: number;
   mes: number;
-  totalBoletas: number;
-  boletasConPdf: number;
-  tieneBoletasPdf: boolean;
+}
+
+interface LecturaFilters extends Record<string, unknown> {
+  search: string;
+  periodoAno: string;
+  periodoMes: string;
+  conCorreccion: string;
 }
 
 export default function LecturasPage() {
@@ -105,77 +103,47 @@ export default function LecturasPage() {
   const canEdit = useCanAccess('lecturas', 'edit_before_boleta');
   const canCorrect = useCanAccess('lecturas', 'create_correction');
 
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
-  const [periodoAno, setPeriodoAno] = useState('');
-  const [periodoMes, setPeriodoMes] = useState('');
-  const [conCorreccion, setConCorreccion] = useState('');
-  const [initializedFilters, setInitializedFilters] = useState(false);
-  
-  // Sort state - default to client number ascending
-  const [sortBy, setSortBy] = useState<string | null>('numeroCliente');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-
-  // Fetch available periods
-  const { data: periodosData, isLoading: isLoadingPeriodos } = useQuery({
-    queryKey: ['admin', 'lecturas', 'periodos-disponibles'],
-    queryFn: async () => {
-      const response = await adminApiClient.get<{ periodos: PeriodoDisponible[] }>('/admin/lecturas/periodos-disponibles');
-      return response.data.periodos;
+  // Use the admin table hook for data management
+  const {
+    data: lecturas,
+    tableProps,
+    filters,
+    setFilter,
+    metadata: periodosData,
+  } = useAdminTable<Lectura, LecturaFilters, PeriodoDisponible[]>({
+    endpoint: '/admin/lecturas',
+    queryKey: 'admin-lecturas',
+    dataKey: 'lecturas',
+    defaultSort: { column: 'numeroCliente', direction: 'asc' },
+    defaultFilters: { search: '', periodoAno: '', periodoMes: '', conCorreccion: '' },
+    metadataEndpoint: '/admin/lecturas/periodos-light',
+    metadataKey: 'periodos',
+    waitForMetadata: true,
+    onMetadataLoaded: (periodos) => {
+      if (periodos && periodos.length > 0) {
+        return {
+          periodoAno: periodos[0].año.toString(),
+          periodoMes: periodos[0].mes.toString(),
+        };
+      }
     },
   });
 
-  // Initialize filters with the most recent available period
-  useEffect(() => {
-    if (periodosData && periodosData.length > 0 && !initializedFilters) {
-      const latestPeriod = periodosData[0]; // Already sorted desc by backend
-      setPeriodoAno(latestPeriod.año.toString());
-      setPeriodoMes(latestPeriod.mes.toString());
-      setInitializedFilters(true);
-    }
-  }, [periodosData, initializedFilters]);
-
   // Get unique years and months from available periods
-  const availableYears = periodosData 
-    ? [...new Set(periodosData.map(p => p.año))].sort((a, b) => b - a)
-    : [];
+  const availableYears = useMemo(() => {
+    return periodosData 
+      ? [...new Set(periodosData.map(p => p.año))].sort((a, b) => b - a)
+      : [];
+  }, [periodosData]);
   
-  const availableMonthsForYear = periodosData && periodoAno
-    ? periodosData
-        .filter(p => p.año === parseInt(periodoAno))
-        .map(p => p.mes)
-        .sort((a, b) => b - a)
-    : [];
-
-  // Sort handler - resets to page 1 when sorting changes
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('asc');
-    }
-    setPage(1); // Reset to first page when sorting
-  };
-
-  // Sortable header component
-  const SortableHeader = ({ column, label }: { column: string; label: string }) => (
-    <button
-      onClick={() => handleSort(column)}
-      className="inline-flex items-center gap-1 hover:text-blue-600 transition-colors font-semibold"
-    >
-      {label}
-      {sortBy === column ? (
-        sortDirection === 'asc' ? (
-          <ArrowUp className="h-3 w-3" />
-        ) : (
-          <ArrowDown className="h-3 w-3" />
-        )
-      ) : (
-        <ArrowUpDown className="h-3 w-3 opacity-40" />
-      )}
-    </button>
-  );
+  const availableMonthsForYear = useMemo(() => {
+    return periodosData && filters.periodoAno
+      ? periodosData
+          .filter(p => p.año === parseInt(filters.periodoAno))
+          .map(p => p.mes)
+          .sort((a, b) => b - a)
+      : [];
+  }, [periodosData, filters.periodoAno]);
 
   // Detail modal state
   const [selectedLectura, setSelectedLectura] = useState<Lectura | null>(null);
@@ -202,25 +170,7 @@ export default function LecturasPage() {
     enabled: !!selectedLectura && showDetailModal,
   });
 
-  // Fetch lecturas - sorting is done server-side
-  const { data, isLoading } = useQuery<LecturasResponse>({
-    queryKey: ['admin-lecturas', page, search, periodoAno, periodoMes, conCorreccion, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (search) params.append('search', search);
-      if (periodoAno) params.append('periodoAno', periodoAno);
-      if (periodoMes) params.append('periodoMes', periodoMes);
-      if (conCorreccion) params.append('conCorreccion', conCorreccion);
-      if (sortBy) params.append('sortBy', sortBy);
-      if (sortBy) params.append('sortDirection', sortDirection);
-      const res = await adminApiClient.get<LecturasResponse>(`/admin/lecturas?${params}`);
-      return res.data;
-    },
-    // Only fetch once filters are initialized
-    enabled: initializedFilters,
-  });
+  // Data is now fetched by useAdminTable hook above
 
   // Edit mutation (direct edit - before boleta)
   const editMutation = useMutation({
@@ -442,19 +392,16 @@ export default function LecturasPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             placeholder="Buscar cliente o medidor..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
+            value={filters.search}
+            onChange={(e) => setFilter('search', e.target.value)}
             className="pl-9"
           />
         </div>
         <Select
-          value={periodoAno || 'all'}
+          value={filters.periodoAno || 'all'}
           onValueChange={(val) => {
             const newYear = val === 'all' ? '' : val;
-            setPeriodoAno(newYear);
+            setFilter('periodoAno', newYear);
             // When changing year, auto-select the first available month for that year
             if (newYear && periodosData) {
               const monthsForYear = periodosData
@@ -462,12 +409,11 @@ export default function LecturasPage() {
                 .map(p => p.mes)
                 .sort((a, b) => b - a);
               if (monthsForYear.length > 0) {
-                setPeriodoMes(monthsForYear[0].toString());
+                setFilter('periodoMes', monthsForYear[0].toString());
               }
             } else {
-              setPeriodoMes('');
+              setFilter('periodoMes', '');
             }
-            setPage(1);
           }}
         >
           <SelectTrigger>
@@ -483,18 +429,15 @@ export default function LecturasPage() {
           </SelectContent>
         </Select>
         <Select
-          value={periodoMes || 'all'}
-          onValueChange={(val) => {
-            setPeriodoMes(val === 'all' ? '' : val);
-            setPage(1);
-          }}
-          disabled={!periodoAno}
+          value={filters.periodoMes || 'all'}
+          onValueChange={(val) => setFilter('periodoMes', val === 'all' ? '' : val)}
+          disabled={!filters.periodoAno}
         >
           <SelectTrigger>
             <SelectValue placeholder="Mes" />
           </SelectTrigger>
           <SelectContent>
-            {!periodoAno && <SelectItem value="all">Todos los meses</SelectItem>}
+            {!filters.periodoAno && <SelectItem value="all">Todos los meses</SelectItem>}
             {availableMonthsForYear.map((month) => (
               <SelectItem key={month} value={month.toString()}>
                 {format(new Date(2000, month - 1, 1), 'MMMM', { locale: es })}
@@ -503,11 +446,8 @@ export default function LecturasPage() {
           </SelectContent>
         </Select>
         <Select
-          value={conCorreccion || 'all'}
-          onValueChange={(val) => {
-            setConCorreccion(val === 'all' ? '' : val);
-            setPage(1);
-          }}
+          value={filters.conCorreccion || 'all'}
+          onValueChange={(val) => setFilter('conCorreccion', val === 'all' ? '' : val)}
         >
           <SelectTrigger>
             <SelectValue placeholder="Correcciones" />
@@ -522,20 +462,12 @@ export default function LecturasPage() {
 
       <DataTable
         columns={columns as any}
-        data={(data?.lecturas || []) as any}
+        data={lecturas as any}
         keyExtractor={(lectura: any) => lectura.id}
-        isLoading={isLoading || isLoadingPeriodos || !initializedFilters}
+        onRowClick={handleRowClick as any}
         emptyMessage="No hay lecturas registradas"
         emptyIcon={<FileText className="h-12 w-12 text-slate-300" />}
-        onRowClick={handleRowClick as any}
-        pagination={
-          data?.pagination && {
-            page: data.pagination.page,
-            totalPages: data.pagination.totalPages,
-            total: data.pagination.total,
-            onPageChange: setPage,
-          }
-        }
+        {...tableProps}
       />
 
       {/* Detail Modal */}

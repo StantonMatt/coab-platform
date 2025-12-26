@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
-import adminApiClient from '@/lib/adminApi';
 import { formatearRUT } from '@coab/utils';
 import { Search, Lock, Users } from 'lucide-react';
 import {
@@ -10,6 +8,7 @@ import {
   DataTable,
   StatusBadge,
   SortableHeader,
+  useAdminTable,
 } from '@/components/admin';
 
 interface Customer {
@@ -25,25 +24,15 @@ interface Customer {
   estaBloqueado: boolean;
 }
 
-interface SearchResponse {
-  data: Customer[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-    hasNextPage: boolean;
-    nextCursor: string | null;
-  };
+interface CustomerFilters extends Record<string, unknown> {
+  q: string;
 }
 
 export default function CustomersPage() {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState<string>('nombre');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const navigate = useNavigate();
+  
+  // Local search input state (for debouncing)
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Check admin auth
   useEffect(() => {
@@ -53,59 +42,36 @@ export default function CustomersPage() {
     }
   }, [navigate]);
 
+  // Use the admin table hook
+  const {
+    data: customers,
+    error,
+    tableProps,
+    filters,
+    setFilter,
+  } = useAdminTable<Customer, CustomerFilters>({
+    endpoint: '/admin/clientes',
+    queryKey: 'admin-customers',
+    dataKey: 'data', // Clientes endpoint uses 'data' key
+    defaultSort: { column: 'nombre', direction: 'asc' },
+    defaultFilters: { q: '' },
+  });
+
   // Debounce search query (300ms)
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedQuery(searchQuery);
-      setPage(1); // Reset to page 1 on new search
+      if (searchQuery.length >= 2 || searchQuery.length === 0) {
+        setFilter('q', searchQuery);
+      }
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [searchQuery]);
-
-  // Sort handler
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('asc');
-    }
-    setPage(1);
-  };
-
-  const {
-    data: customersData,
-    isLoading,
-    error,
-  } = useQuery<SearchResponse>({
-    queryKey: ['admin-customers', debouncedQuery, page, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (debouncedQuery && debouncedQuery.length >= 2) {
-        params.append('q', debouncedQuery);
-      }
-      params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      const res = await adminApiClient.get<SearchResponse>(`/admin/clientes?${params}`);
-      return res.data;
-    },
-  });
+  }, [searchQuery, setFilter]);
 
   const columns = [
     {
       key: 'rut',
-      header: (
-        <SortableHeader
-          column="rut"
-          label="RUT"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="rut" label="RUT" />,
       render: (customer: Customer) => (
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm text-slate-700">
@@ -119,30 +85,14 @@ export default function CustomersPage() {
     },
     {
       key: 'numeroCliente',
-      header: (
-        <SortableHeader
-          column="numeroCliente"
-          label="N° Cliente"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="numeroCliente" label="N° Cliente" />,
       render: (customer: Customer) => (
         <span className="font-mono text-sm text-slate-700">{customer.numeroCliente}</span>
       ),
     },
     {
       key: 'nombre',
-      header: (
-        <SortableHeader
-          column="nombre"
-          label="Nombre"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="nombre" label="Nombre" />,
       render: (customer: Customer) => (
         <span className="font-medium text-slate-900">{customer.nombre}</span>
       ),
@@ -156,15 +106,7 @@ export default function CustomersPage() {
     },
     {
       key: 'estado',
-      header: (
-        <SortableHeader
-          column="saldo"
-          label="Estado"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="saldo" label="Estado" />,
       render: (customer: Customer) => (
         <StatusBadge
           status={customer.estadoCuenta === 'AL_DIA' ? 'activo' : 'pendiente'}
@@ -211,24 +153,16 @@ export default function CustomersPage() {
       {/* Data Table */}
       <DataTable
         columns={columns}
-        data={customersData?.data || []}
+        data={customers}
         keyExtractor={(customer) => customer.id}
-        isLoading={isLoading}
         emptyMessage={
-          debouncedQuery
-            ? `No se encontraron clientes para "${debouncedQuery}"`
+          filters.q
+            ? `No se encontraron clientes para "${filters.q}"`
             : 'No hay clientes registrados'
         }
         emptyIcon={<Users className="h-12 w-12 text-slate-300" />}
         onRowClick={(customer) => navigate(`/admin/clientes/${customer.id}`)}
-        pagination={
-          customersData?.pagination && {
-            page: customersData.pagination.page,
-            totalPages: customersData.pagination.totalPages,
-            total: customersData.pagination.total,
-            onPageChange: setPage,
-          }
-        }
+        {...tableProps}
       />
     </AdminLayout>
   );

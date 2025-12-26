@@ -123,6 +123,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   /**
    * GET /admin/lecturas/periodos-disponibles
    * Get list of periods (year-month) that have lecturas, with boleta PDF status
+   * Note: This is slow (N+1 queries). Use /periodos-light for filter dropdowns.
    */
   fastify.get('/lecturas/periodos-disponibles', async (request, reply) => {
     try {
@@ -134,6 +135,26 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         error: {
           code: 'INTERNAL_ERROR',
           message: 'Error al obtener períodos disponibles',
+        },
+      });
+    }
+  });
+
+  /**
+   * GET /admin/lecturas/periodos-light
+   * Lightweight version - just returns distinct periods without boleta stats
+   * Single query, very fast - use this for filter dropdowns
+   */
+  fastify.get('/lecturas/periodos-light', async (request, reply) => {
+    try {
+      const periodos = await lecturasService.getAvailablePeriodsLight();
+      return { periodos };
+    } catch (error: any) {
+      fastify.log.error(error, 'Error al obtener períodos');
+      return reply.code(500).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Error al obtener períodos',
         },
       });
     }

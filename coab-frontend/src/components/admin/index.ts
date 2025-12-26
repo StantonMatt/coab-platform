@@ -14,6 +14,12 @@ export {
   type UseSortStateReturn,
 } from './SortableHeader';
 export {
+  useAdminTable,
+  type UseAdminTableOptions,
+  type UseAdminTableReturn,
+  type Pagination,
+} from './useAdminTable';
+export {
   PermissionGate,
   useCanAccess,
   usePermissions,

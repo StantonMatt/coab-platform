@@ -8,6 +8,7 @@ import {
   PermissionGate,
   SortableHeader,
   useCanAccess,
+  useAdminTable,
 } from '@/components/admin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -90,37 +91,39 @@ const emptyForm: RepactacionFormData = {
   observaciones: '',
 };
 
+interface RepactacionFilters extends Record<string, unknown> {
+  estado: string;
+}
+
 export default function AdminRepactacionesPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const _canCreate = useCanAccess('repactaciones', 'create');
   void _canCreate; // For future use
 
+  // Use the admin table hook for repactaciones
+  const {
+    data: repactaciones,
+    tableProps: repactacionesTableProps,
+    filters,
+    setFilter,
+    refetch: refetchRepactaciones,
+  } = useAdminTable<Repactacion, RepactacionFilters>({
+    endpoint: '/admin/repactaciones',
+    queryKey: 'admin-repactaciones',
+    dataKey: 'repactaciones',
+    defaultSort: { column: 'fechaInicio', direction: 'desc' },
+    defaultFilters: { estado: '' },
+  });
+
   const [activeTab, setActiveTab] = useState('repactaciones');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState<RepactacionFormData>(emptyForm);
-  const [page, setPage] = useState(1);
   const [solicitudesPage, setSolicitudesPage] = useState(1);
   const [search, setSearch] = useState('');
-  const [estadoFilter, setEstadoFilter] = useState('');
-
-  // Sort state
-  const [sortBy, setSortBy] = useState<string>('fechaInicio');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Detail modal state
   const [selectedRepactacion, setSelectedRepactacion] = useState<Repactacion | null>(null);
-
-  // Sort handler
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('desc');
-    }
-    setPage(1);
-  };
 
   // Confirm dialog states
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
@@ -129,25 +132,6 @@ export default function AdminRepactacionesPage() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveCuotas, setApproveCuotas] = useState('12');
-
-  // Query for repactaciones
-  const { data: repactacionesData, isLoading: loadingRepactaciones } = useQuery({
-    queryKey: ['admin', 'repactaciones', page, estadoFilter, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (estadoFilter) params.append('estado', estadoFilter);
-      params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      const res = await adminApiClient.get(`/admin/repactaciones?${params}`);
-      return res.data as {
-        repactaciones: Repactacion[];
-        pagination: { total: number; page: number; limit: number; totalPages: number };
-      };
-    },
-    enabled: activeTab === 'repactaciones',
-  });
 
   // Query for solicitudes
   const { data: solicitudesData, isLoading: loadingSolicitudes } = useQuery({
@@ -184,7 +168,7 @@ export default function AdminRepactacionesPage() {
     },
     onSuccess: () => {
       toast({ title: 'Repactación creada', description: 'La repactación se ha creado exitosamente.' });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'repactaciones'] });
+      refetchRepactaciones();
       closeModal();
     },
     onError: (error: any) => {
@@ -203,7 +187,7 @@ export default function AdminRepactacionesPage() {
     onSuccess: () => {
       toast({ title: 'Solicitud aprobada', description: 'Se ha creado la repactación para el cliente.' });
       queryClient.invalidateQueries({ queryKey: ['admin', 'solicitudes-repactacion'] });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'repactaciones'] });
+      refetchRepactaciones();
       setApprovingId(null);
     },
     onError: (error: any) => {
@@ -242,7 +226,7 @@ export default function AdminRepactacionesPage() {
     },
     onSuccess: () => {
       toast({ title: 'Repactación cancelada', description: 'La repactación ha sido cancelada.' });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'repactaciones'] });
+      refetchRepactaciones();
       setCancelConfirmOpen(false);
       setCancelingId(null);
     },
@@ -317,15 +301,7 @@ export default function AdminRepactacionesPage() {
     },
     {
       key: 'cliente',
-      header: (
-        <SortableHeader
-          column="cliente"
-          label="Cliente"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="cliente" label="Cliente" />,
       render: (r: Repactacion) => (
         <div>
           <p className="font-medium">{r.cliente?.nombre || `Cliente #${r.clienteId}`}</p>
@@ -334,15 +310,7 @@ export default function AdminRepactacionesPage() {
     },
     {
       key: 'monto',
-      header: (
-        <SortableHeader
-          column="monto"
-          label="Monto"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="monto" label="Monto" />,
       render: (r: Repactacion) => (
         <div>
           <p className="font-medium">{formatearPesos(r.montoDeudaInicial)}</p>
@@ -354,28 +322,12 @@ export default function AdminRepactacionesPage() {
     },
     {
       key: 'estado',
-      header: (
-        <SortableHeader
-          column="estado"
-          label="Estado"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="estado" label="Estado" />,
       render: (r: Repactacion) => <StatusBadge status={r.estado} statusMap={ESTADO_MAP} />,
     },
     {
       key: 'fechaInicio',
-      header: (
-        <SortableHeader
-          column="fechaInicio"
-          label="Inicio"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="fechaInicio" label="Inicio" />,
       render: (r: Repactacion) =>
         r.fechaInicio ? format(new Date(r.fechaInicio), 'dd/MM/yyyy', { locale: es }) : '-',
     },
@@ -501,11 +453,8 @@ export default function AdminRepactacionesPage() {
               />
             </div>
             <Select
-              value={estadoFilter || 'all'}
-              onValueChange={(val) => {
-                setEstadoFilter(val === 'all' ? '' : val);
-                setPage(1);
-              }}
+              value={filters.estado || 'all'}
+              onValueChange={(val) => setFilter('estado', val === 'all' ? '' : val)}
             >
               <SelectTrigger className="w-full sm:w-40">
                 <SelectValue placeholder="Estado" />
@@ -520,21 +469,13 @@ export default function AdminRepactacionesPage() {
           </div>
 
           <DataTable
-            data={repactacionesData?.repactaciones || []}
+            data={repactaciones}
             columns={repactacionesColumns}
-            isLoading={loadingRepactaciones}
             keyExtractor={(r) => r.id}
             emptyMessage="No hay repactaciones registradas"
             emptyIcon={<RefreshCw className="h-12 w-12 text-slate-300" />}
             onRowClick={(r) => setSelectedRepactacion(r)}
-            pagination={
-              repactacionesData?.pagination && {
-                page: repactacionesData.pagination.page,
-                totalPages: repactacionesData.pagination.totalPages,
-                total: repactacionesData.pagination.total,
-                onPageChange: setPage,
-              }
-            }
+            {...repactacionesTableProps}
           />
         </TabsContent>
 

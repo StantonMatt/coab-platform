@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -31,6 +31,7 @@ import {
   PermissionGate,
   SortableHeader,
   useCanAccess,
+  useAdminTable,
 } from '@/components/admin';
 
 interface DireccionSearchResult {
@@ -68,14 +69,9 @@ interface Medidor {
   } | null;
 }
 
-interface MedidoresResponse {
-  medidores: Medidor[];
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
+interface MedidorFilters extends Record<string, unknown> {
+  estado: string;
+  search: string;
 }
 
 interface MedidorFormData {
@@ -103,23 +99,30 @@ const initialFormData: MedidorFormData = {
 export default function MedidoresPage() {
   const { toast } = useToast();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const _canCreate = useCanAccess('medidores', 'create');
   void _canCreate; // For future use
   const canEdit = useCanAccess('medidores', 'edit');
   const canDelete = useCanAccess('medidores', 'delete');
 
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
-  const [estadoFilter, setEstadoFilter] = useState('');
+  // Use the admin table hook
+  const {
+    data: medidores,
+    tableProps,
+    filters,
+    setFilter,
+    refetch,
+  } = useAdminTable<Medidor, MedidorFilters>({
+    endpoint: '/admin/medidores',
+    queryKey: 'admin-medidores',
+    dataKey: 'medidores',
+    defaultSort: { column: 'fechaInstalacion', direction: 'desc' },
+    defaultFilters: { estado: '', search: '' },
+  });
+
   const [showForm, setShowForm] = useState(false);
   const [editingMedidor, setEditingMedidor] = useState<Medidor | null>(null);
   const [deleteMedidor, setDeleteMedidor] = useState<Medidor | null>(null);
   const [formData, setFormData] = useState<MedidorFormData>(initialFormData);
-
-  // Sort state
-  const [sortBy, setSortBy] = useState<string>('fechaInstalacion');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Detail modal state
   const [selectedMedidor, setSelectedMedidor] = useState<Medidor | null>(null);
@@ -147,17 +150,6 @@ export default function MedidoresPage() {
     }
   }, [showForm, editingMedidor]);
 
-  // Sort handler
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('desc');
-    }
-    setPage(1);
-  };
-
   // Search addresses query
   const { data: addressResults, isLoading: searchingAddresses } = useQuery<{
     direcciones: DireccionSearchResult[];
@@ -172,11 +164,8 @@ export default function MedidoresPage() {
     enabled: debouncedAddressSearch.length >= 2 && !selectedAddress,
   });
 
-  // Fetch medidores
-  const { data, isLoading } = useQuery<MedidoresResponse>({
-    queryKey: ['admin-medidores', page, search, estadoFilter, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
+  // Data is now fetched by useAdminTable hook above
+  const data = { medidores }; // Compatibility wrapper
       params.append('page', page.toString());
       params.append('limit', '20');
       if (search) params.append('search', search);
@@ -197,7 +186,7 @@ export default function MedidoresPage() {
     },
     onSuccess: () => {
       toast({ title: 'Medidor creado', description: 'El medidor se creó correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-medidores'] });
+      refetch();
       handleCloseForm();
     },
     onError: (error: any) => {
@@ -217,7 +206,7 @@ export default function MedidoresPage() {
     },
     onSuccess: () => {
       toast({ title: 'Medidor actualizado', description: 'Los cambios se guardaron' });
-      queryClient.invalidateQueries({ queryKey: ['admin-medidores'] });
+      refetch();
       handleCloseForm();
     },
     onError: (error: any) => {
@@ -237,7 +226,7 @@ export default function MedidoresPage() {
     },
     onSuccess: () => {
       toast({ title: 'Medidor eliminado', description: 'El medidor se eliminó correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-medidores'] });
+      refetch();
       setDeleteMedidor(null);
     },
     onError: (error: any) => {
@@ -260,7 +249,7 @@ export default function MedidoresPage() {
         title: data.mostrarEnRuta ? 'Agregado a ruta' : 'Removido de ruta',
         description: `El medidor ${data.mostrarEnRuta ? 'se mostrará' : 'no se mostrará'} en la ruta de lectura.`,
       });
-      queryClient.invalidateQueries({ queryKey: ['admin-medidores'] });
+      refetch();
     },
     onError: (error: any) => {
       toast({
@@ -340,15 +329,7 @@ export default function MedidoresPage() {
   const columns = [
     {
       key: 'numeroSerie',
-      header: (
-        <SortableHeader
-          column="numeroSerie"
-          label="Serie / Info"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="numeroSerie" label="Serie / Info" />,
       render: (medidor: Medidor) => (
         <div>
           <span className="font-medium text-slate-900">
@@ -364,15 +345,7 @@ export default function MedidoresPage() {
     },
     {
       key: 'direccion',
-      header: (
-        <SortableHeader
-          column="cliente"
-          label="Cliente / Dirección"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="cliente" label="Cliente / Dirección" />,
       render: (medidor: Medidor) => (
         <div className="text-sm">
           {medidor.direccion?.clienteNombre && (
@@ -407,15 +380,7 @@ export default function MedidoresPage() {
     },
     {
       key: 'estado',
-      header: (
-        <SortableHeader
-          column="estado"
-          label="Estado"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="estado" label="Estado" />,
       render: (medidor: Medidor) => {
         const estadoMap: Record<string, { label: string; className: string }> = {
           activo: { label: 'Funcionando', className: 'bg-emerald-100 text-emerald-700' },
@@ -473,20 +438,14 @@ export default function MedidoresPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             placeholder="Buscar por serie, cliente o dirección..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
+            value={filters.search}
+            onChange={(e) => setFilter('search', e.target.value)}
             className="pl-9"
           />
         </div>
         <Select
-          value={estadoFilter || 'all'}
-          onValueChange={(val) => {
-            setEstadoFilter(val === 'all' ? '' : val);
-            setPage(1);
-          }}
+          value={filters.estado || 'all'}
+          onValueChange={(val) => setFilter('estado', val === 'all' ? '' : val)}
         >
           <SelectTrigger className="w-full sm:w-40">
             <SelectValue placeholder="Estado" />
@@ -503,20 +462,12 @@ export default function MedidoresPage() {
 
       <DataTable
         columns={columns}
-        data={data?.medidores || []}
+        data={medidores}
         keyExtractor={(medidor) => medidor.id}
-        isLoading={isLoading}
         emptyMessage="No hay medidores registrados"
         emptyIcon={<Gauge className="h-12 w-12 text-slate-300" />}
         onRowClick={(medidor) => setSelectedMedidor(medidor)}
-        pagination={
-          data?.pagination && {
-            page: data.pagination.page,
-            totalPages: data.pagination.totalPages,
-            total: data.pagination.total,
-            onPageChange: setPage,
-          }
-        }
+        {...tableProps}
       />
 
       {/* Detail Modal */}

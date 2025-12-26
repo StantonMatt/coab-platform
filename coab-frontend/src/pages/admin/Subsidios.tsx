@@ -33,6 +33,7 @@ import {
   SortableHeader,
   useSortState,
   useCanAccess,
+  useAdminTable,
 } from '@/components/admin';
 
 interface Subsidio {
@@ -116,8 +117,19 @@ export default function SubsidiosPage() {
   const canEdit = useCanAccess('subsidios', 'edit');
   const canDelete = useCanAccess('subsidios', 'delete');
 
+  // Use the admin table hook for subsidios
+  const {
+    data: subsidios,
+    tableProps: subsidiosTableProps,
+    refetch: refetchSubsidios,
+  } = useAdminTable<Subsidio>({
+    endpoint: '/admin/subsidios',
+    queryKey: 'admin-subsidios',
+    dataKey: 'subsidios',
+    defaultSort: { column: 'porcentaje', direction: 'desc' },
+  });
+
   const [activeTab, setActiveTab] = useState('tipos');
-  const [page, setPage] = useState(1);
   const [historialPage, setHistorialPage] = useState(1);
   const [historialSearch, setHistorialSearch] = useState('');
   const [historialFilter, setHistorialFilter] = useState('');
@@ -128,14 +140,7 @@ export default function SubsidiosPage() {
   const [selectedSubsidio, setSelectedSubsidio] = useState<Subsidio | null>(null);
   const [selectedHistorial, setSelectedHistorial] = useState<HistorialEntry | null>(null);
 
-  // Use the sort hook for subsidios
-  const { sortBy, sortDirection, handleSort } = useSortState({
-    defaultColumn: 'porcentaje',
-    defaultDirection: 'desc',
-    onSortChange: () => setPage(1),
-  });
-
-  // Use the sort hook for historial
+  // Use the sort hook for historial (keeping separate as it has different state)
   const {
     sortBy: historialSortBy,
     sortDirection: historialSortDirection,
@@ -156,20 +161,7 @@ export default function SubsidiosPage() {
   const [removeEntry, setRemoveEntry] = useState<HistorialEntry | null>(null);
   const [removeMotivo, setRemoveMotivo] = useState('');
 
-  // Fetch subsidios (types)
-  const { data: subsidiosData, isLoading: loadingSubsidios } = useQuery<SubsidiosResponse>({
-    queryKey: ['admin-subsidios', page, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (sortBy) params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      const res = await adminApiClient.get<SubsidiosResponse>(`/admin/subsidios?${params}`);
-      return res.data;
-    },
-    enabled: activeTab === 'tipos',
-  });
+  // Subsidios data now managed by useAdminTable hook above
 
   // Fetch historial (client assignments)
   const { data: historialData, isLoading: loadingHistorial } = useQuery<HistorialResponse>({
@@ -205,7 +197,7 @@ export default function SubsidiosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Subsidio creado', description: 'El subsidio se creó correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidios'] });
+      refetchSubsidios();
       handleCloseForm();
     },
     onError: (error: any) => {
@@ -225,7 +217,7 @@ export default function SubsidiosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Subsidio actualizado', description: 'Los cambios se guardaron' });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidios'] });
+      refetchSubsidios();
       handleCloseForm();
     },
     onError: (error: any) => {
@@ -245,7 +237,7 @@ export default function SubsidiosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Subsidio eliminado', description: 'El subsidio se eliminó correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidios'] });
+      refetchSubsidios();
       setDeleteSubsidio(null);
       setSelectedSubsidio(null);
     },
@@ -270,7 +262,7 @@ export default function SubsidiosPage() {
     onSuccess: () => {
       toast({ title: 'Subsidio asignado', description: 'El cliente fue asignado al subsidio' });
       queryClient.invalidateQueries({ queryKey: ['admin-subsidio-historial'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidios'] });
+      refetchSubsidios();
       setShowAssign(false);
       setAssignClienteId('');
       setAssignSubsidioId('');
@@ -305,7 +297,7 @@ export default function SubsidiosPage() {
     onSuccess: () => {
       toast({ title: 'Subsidio removido', description: 'El cliente fue removido del subsidio' });
       queryClient.invalidateQueries({ queryKey: ['admin-subsidio-historial'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidios'] });
+      refetchSubsidios();
       setShowRemove(false);
       setRemoveEntry(null);
       setRemoveMotivo('');
@@ -537,21 +529,12 @@ export default function SubsidiosPage() {
         <TabsContent value="tipos">
           <DataTable
             columns={subsidiosColumns}
-            data={subsidiosData?.subsidios || []}
+            data={subsidios}
             keyExtractor={(subsidio) => subsidio.id}
-            isLoading={loadingSubsidios}
             emptyMessage="No hay subsidios registrados"
             emptyIcon={<Percent className="h-12 w-12 text-slate-300" />}
             onRowClick={(subsidio) => setSelectedSubsidio(subsidio)}
-            pagination={
-              subsidiosData?.pagination && {
-                page: subsidiosData.pagination.page,
-                totalPages: subsidiosData.pagination.totalPages,
-                total: subsidiosData.pagination.total,
-                onPageChange: setPage,
-              }
-            }
-            sorting={{ sortBy, sortDirection, onSort: handleSort }}
+            {...subsidiosTableProps}
           />
         </TabsContent>
 

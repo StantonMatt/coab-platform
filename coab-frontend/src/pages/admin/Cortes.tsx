@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Scissors, Plus, Search, RefreshCcw } from 'lucide-react';
@@ -32,6 +32,7 @@ import {
   PermissionGate,
   SortableHeader,
   useCanAccess,
+  useAdminTable,
 } from '@/components/admin';
 
 interface CorteServicio {
@@ -56,14 +57,9 @@ interface CorteServicio {
   } | null;
 }
 
-interface CortesResponse {
-  cortes: CorteServicio[];
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
+interface CorteFilters extends Record<string, unknown> {
+  estado: string;
+  search: string;
 }
 
 interface CorteFormData {
@@ -90,50 +86,31 @@ const ESTADO_MAP: Record<string, { label: string; className: string }> = {
 
 export default function AdminCortesPage() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const canReposicion = useCanAccess('cortes_servicio', 'authorize_reposicion');
+
+  // Use the admin table hook
+  const {
+    data: cortes,
+    tableProps,
+    filters,
+    setFilter,
+    refetch,
+  } = useAdminTable<CorteServicio, CorteFilters>({
+    endpoint: '/admin/cortes',
+    queryKey: 'admin-cortes',
+    dataKey: 'cortes',
+    defaultSort: { column: 'fechaCorte', direction: 'desc' },
+    defaultFilters: { estado: '', search: '' },
+  });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState<CorteFormData>(emptyForm);
-  const [page, setPage] = useState(1);
-  const [estadoFilter, setEstadoFilter] = useState('');
-  const [search, setSearch] = useState('');
-
-  // Sort state
-  const [sortBy, setSortBy] = useState<string>('fechaCorte');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Detail modal state
   const [selectedCorte, setSelectedCorte] = useState<CorteServicio | null>(null);
 
   // Reposicion state
   const [reposingCorte, setReposingCorte] = useState<CorteServicio | null>(null);
-
-  // Sort handler
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('desc');
-    }
-    setPage(1);
-  };
-
-  const { data, isLoading } = useQuery<CortesResponse>({
-    queryKey: ['admin', 'cortes', page, estadoFilter, search, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (estadoFilter) params.append('estado', estadoFilter);
-      if (search) params.append('search', search);
-      params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      const res = await adminApiClient.get(`/admin/cortes?${params}`);
-      return res.data;
-    },
-  });
 
   const createMutation = useMutation({
     mutationFn: async (data: CorteFormData) => {
@@ -147,7 +124,7 @@ export default function AdminCortesPage() {
     },
     onSuccess: () => {
       toast({ title: 'Corte registrado', description: 'El corte de servicio se ha registrado.' });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'cortes'] });
+      refetch();
       closeModal();
     },
     onError: (error: any) => {
@@ -165,7 +142,7 @@ export default function AdminCortesPage() {
     },
     onSuccess: () => {
       toast({ title: 'Servicio repuesto', description: 'El servicio ha sido repuesto exitosamente.' });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'cortes'] });
+      refetch();
       setReposingCorte(null);
       setSelectedCorte(null);
     },
@@ -191,15 +168,7 @@ export default function AdminCortesPage() {
   const columns = [
     {
       key: 'cliente',
-      header: (
-        <SortableHeader
-          column="cliente"
-          label="Cliente"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="cliente" label="Cliente" />,
       render: (c: CorteServicio) => (
         <div>
           <p className="font-medium text-slate-900">
@@ -211,15 +180,7 @@ export default function AdminCortesPage() {
     },
     {
       key: 'fechaCorte',
-      header: (
-        <SortableHeader
-          column="fechaCorte"
-          label="Fecha Corte"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="fechaCorte" label="Fecha Corte" />,
       render: (c: CorteServicio) =>
         c.fechaCorte ? format(new Date(c.fechaCorte), 'dd/MM/yyyy', { locale: es }) : '-',
     },
@@ -232,30 +193,14 @@ export default function AdminCortesPage() {
     },
     {
       key: 'estado',
-      header: (
-        <SortableHeader
-          column="estado"
-          label="Estado"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="estado" label="Estado" />,
       render: (c: CorteServicio) => (
         <StatusBadge status={c.estado} statusMap={ESTADO_MAP} />
       ),
     },
     {
       key: 'fechaReposicion',
-      header: (
-        <SortableHeader
-          column="fechaReposicion"
-          label="Reposición"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="fechaReposicion" label="Reposición" />,
       render: (c: CorteServicio) =>
         c.fechaReposicion ? format(new Date(c.fechaReposicion), 'dd/MM/yyyy', { locale: es }) : '-',
     },
@@ -281,20 +226,14 @@ export default function AdminCortesPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             placeholder="Buscar por cliente..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
+            value={filters.search}
+            onChange={(e) => setFilter('search', e.target.value)}
             className="pl-9"
           />
         </div>
         <Select
-          value={estadoFilter || 'all'}
-          onValueChange={(val) => {
-            setEstadoFilter(val === 'all' ? '' : val);
-            setPage(1);
-          }}
+          value={filters.estado || 'all'}
+          onValueChange={(val) => setFilter('estado', val === 'all' ? '' : val)}
         >
           <SelectTrigger className="w-full sm:w-40">
             <SelectValue placeholder="Estado" />
@@ -310,20 +249,12 @@ export default function AdminCortesPage() {
 
       <DataTable
         columns={columns}
-        data={data?.cortes || []}
+        data={cortes}
         keyExtractor={(c) => c.id}
-        isLoading={isLoading}
         emptyMessage="No hay cortes de servicio registrados"
         emptyIcon={<Scissors className="h-12 w-12 text-slate-300" />}
         onRowClick={(corte) => setSelectedCorte(corte)}
-        pagination={
-          data?.pagination && {
-            page: data.pagination.page,
-            totalPages: data.pagination.totalPages,
-            total: data.pagination.total,
-            onPageChange: setPage,
-          }
-        }
+        {...tableProps}
       />
 
       {/* Detail Modal */}

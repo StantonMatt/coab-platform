@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,7 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import adminApiClient from '@/lib/adminApi';
 import { formatearRUT, formatearPesos } from '@coab/utils';
 import { Search, CreditCard, Filter, X } from 'lucide-react';
 import {
@@ -24,6 +22,7 @@ import {
   DataTable,
   StatusBadge,
   SortableHeader,
+  useAdminTable,
 } from '@/components/admin';
 
 interface Payment {
@@ -57,6 +56,14 @@ interface PaymentsResponse {
   };
 }
 
+interface PaymentFilters extends Record<string, unknown> {
+  q: string;
+  fechaDesde: string;
+  fechaHasta: string;
+  tipoPago: string;
+  estado: string;
+}
+
 const PAYMENT_TYPES: Record<string, string> = {
   transferencia: 'Transferencia',
   efectivo: 'Efectivo',
@@ -77,21 +84,10 @@ const PAYMENT_STATES: Record<string, { label: string; className: string }> = {
 export default function PaymentsPage() {
   const navigate = useNavigate();
   
-  // Filter state
+  // Local search input state (for debouncing)
   const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [fechaDesde, setFechaDesde] = useState('');
-  const [fechaHasta, setFechaHasta] = useState('');
-  const [tipoPago, setTipoPago] = useState('');
-  const [estado, setEstado] = useState('');
-  const [page, setPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
-  const limit = 20;
-
-  // Sort state
-  const [sortBy, setSortBy] = useState<string>('fecha');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-
+  
   // Detail modal state
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
 
@@ -103,64 +99,41 @@ export default function PaymentsPage() {
     }
   }, [navigate]);
 
+  // Use the admin table hook
+  const {
+    data: payments,
+    rawResponse,
+    tableProps,
+    filters,
+    setFilter,
+    resetFilters,
+  } = useAdminTable<Payment, PaymentFilters>({
+    endpoint: '/admin/pagos',
+    queryKey: 'admin-payments',
+    dataKey: 'pagos',
+    defaultSort: { column: 'fecha', direction: 'desc' },
+    defaultFilters: { q: '', fechaDesde: '', fechaHasta: '', tipoPago: '', estado: '' },
+  });
+
+  // Get resumen from raw response
+  const resumen = (rawResponse as PaymentsResponse | null)?.resumen;
+
   // Debounce search query
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedQuery(searchQuery);
-      setPage(1);
+      if (searchQuery !== filters.q) {
+        setFilter('q', searchQuery);
+      }
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery]);
-
-  // Reset page when filters change
-  useEffect(() => {
-    setPage(1);
-  }, [fechaDesde, fechaHasta, tipoPago, estado]);
-
-  // Sort handler
-  const handleSort = (column: string) => {
-    if (sortBy === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortDirection('desc');
-    }
-    setPage(1);
-  };
-
-  // Build query params
-  const buildQueryParams = () => {
-    const params = new URLSearchParams();
-    params.set('page', page.toString());
-    params.set('limit', limit.toString());
-    if (debouncedQuery) params.set('q', debouncedQuery);
-    if (fechaDesde) params.set('fechaDesde', fechaDesde);
-    if (fechaHasta) params.set('fechaHasta', fechaHasta);
-    if (tipoPago) params.set('tipoPago', tipoPago);
-    if (estado) params.set('estado', estado);
-    params.set('sortBy', sortBy);
-    params.set('sortDirection', sortDirection);
-    return params.toString();
-  };
-
-  const { data, isLoading } = useQuery<PaymentsResponse>({
-    queryKey: ['admin-payments', page, debouncedQuery, fechaDesde, fechaHasta, tipoPago, estado, sortBy, sortDirection],
-    queryFn: async () => {
-      const res = await adminApiClient.get<PaymentsResponse>(`/admin/pagos?${buildQueryParams()}`);
-      return res.data;
-    },
-  });
+  }, [searchQuery, filters.q, setFilter]);
 
   const clearFilters = () => {
     setSearchQuery('');
-    setFechaDesde('');
-    setFechaHasta('');
-    setTipoPago('');
-    setEstado('');
-    setPage(1);
+    resetFilters();
   };
 
-  const hasActiveFilters = fechaDesde || fechaHasta || tipoPago || estado || debouncedQuery;
+  const hasActiveFilters = filters.fechaDesde || filters.fechaHasta || filters.tipoPago || filters.estado || filters.q;
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr + 'T12:00:00');
@@ -174,15 +147,7 @@ export default function PaymentsPage() {
   const columns = [
     {
       key: 'fecha',
-      header: (
-        <SortableHeader
-          column="fecha"
-          label="Fecha"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="fecha" label="Fecha" />,
       render: (payment: Payment) => (
         <span className="text-sm text-slate-700">
           {formatDate(payment.fechaPago)}
@@ -191,15 +156,7 @@ export default function PaymentsPage() {
     },
     {
       key: 'cliente',
-      header: (
-        <SortableHeader
-          column="cliente"
-          label="Cliente"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="cliente" label="Cliente" />,
       render: (payment: Payment) => (
         payment.cliente ? (
           <div>
@@ -219,15 +176,7 @@ export default function PaymentsPage() {
     },
     {
       key: 'monto',
-      header: (
-        <SortableHeader
-          column="monto"
-          label="Monto"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="monto" label="Monto" />,
       render: (payment: Payment) => (
         <span className="font-semibold text-slate-900">
           {formatearPesos(payment.monto)}
@@ -245,15 +194,7 @@ export default function PaymentsPage() {
     },
     {
       key: 'estado',
-      header: (
-        <SortableHeader
-          column="estado"
-          label="Estado"
-          sortBy={sortBy}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-        />
-      ),
+      header: <SortableHeader column="estado" label="Estado" />,
       render: (payment: Payment) => (
         <StatusBadge
           status={payment.estado}
@@ -308,8 +249,8 @@ export default function PaymentsPage() {
               </label>
               <Input
                 type="date"
-                value={fechaDesde}
-                onChange={(e) => setFechaDesde(e.target.value)}
+                value={filters.fechaDesde}
+                onChange={(e) => setFilter('fechaDesde', e.target.value)}
               />
             </div>
             <div>
@@ -318,15 +259,15 @@ export default function PaymentsPage() {
               </label>
               <Input
                 type="date"
-                value={fechaHasta}
-                onChange={(e) => setFechaHasta(e.target.value)}
+                value={filters.fechaHasta}
+                onChange={(e) => setFilter('fechaHasta', e.target.value)}
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">
                 Tipo de Pago
               </label>
-              <Select value={tipoPago} onValueChange={setTipoPago}>
+              <Select value={filters.tipoPago || ''} onValueChange={(v) => setFilter('tipoPago', v)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Todos" />
                 </SelectTrigger>
@@ -344,7 +285,7 @@ export default function PaymentsPage() {
               <label className="block text-xs font-medium text-slate-600 mb-1">
                 Estado
               </label>
-              <Select value={estado} onValueChange={setEstado}>
+              <Select value={filters.estado || ''} onValueChange={(v) => setFilter('estado', v)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Todos" />
                 </SelectTrigger>
@@ -363,18 +304,18 @@ export default function PaymentsPage() {
       </div>
 
       {/* Summary */}
-      {data && (
+      {resumen && (
         <div className="flex items-center gap-4 text-sm mb-4">
           <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-slate-200">
             <span className="text-slate-600">Total:</span>
             <span className="font-semibold text-slate-900">
-              {formatearPesos(data.resumen.totalMonto)}
+              {formatearPesos(resumen.totalMonto)}
             </span>
           </div>
           <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-slate-200">
             <span className="text-slate-600">Pagos:</span>
             <span className="font-semibold text-slate-900">
-              {data.resumen.cantidadPagos.toLocaleString('es-CL')}
+              {resumen.cantidadPagos.toLocaleString('es-CL')}
             </span>
           </div>
         </div>
@@ -383,20 +324,12 @@ export default function PaymentsPage() {
       {/* Data Table */}
       <DataTable
         columns={columns}
-        data={data?.pagos || []}
+        data={payments}
         keyExtractor={(payment) => payment.id}
-        isLoading={isLoading}
         emptyMessage="No se encontraron pagos con los filtros aplicados"
         emptyIcon={<CreditCard className="h-12 w-12 text-slate-300" />}
         onRowClick={(payment) => setSelectedPayment(payment)}
-        pagination={
-          data?.pagination && {
-            page: data.pagination.page,
-            totalPages: data.pagination.totalPages,
-            total: data.pagination.total,
-            onPageChange: setPage,
-          }
-        }
+        {...tableProps}
       />
 
       {/* Detail Modal */}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Map, Plus, Pencil, Trash2, ArrowRightLeft, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -30,8 +30,8 @@ import {
   DeleteConfirmDialog,
   PermissionGate,
   SortableHeader,
-  useSortState,
   useCanAccess,
+  useAdminTable,
 } from '@/components/admin';
 
 interface Ruta {
@@ -77,22 +77,25 @@ interface DireccionesResponse {
 
 export default function RutasPage() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const canEdit = useCanAccess('rutas', 'edit');
   const canDelete = useCanAccess('rutas', 'delete');
 
-  const [page, setPage] = useState(1);
+  // Use the admin table hook
+  const {
+    data: rutas,
+    tableProps,
+    refetch,
+  } = useAdminTable<Ruta>({
+    endpoint: '/admin/rutas',
+    queryKey: 'admin-rutas',
+    dataKey: 'rutas',
+    defaultSort: { column: 'nombre', direction: 'asc' },
+  });
+
   const [showForm, setShowForm] = useState(false);
   const [editingRuta, setEditingRuta] = useState<Ruta | null>(null);
   const [deleteRuta, setDeleteRuta] = useState<Ruta | null>(null);
   const [selectedRuta, setSelectedRuta] = useState<Ruta | null>(null);
-
-  // Use the sort hook
-  const { sortBy, sortDirection, handleSort } = useSortState({
-    defaultColumn: 'nombre',
-    defaultDirection: 'asc',
-    onSortChange: () => setPage(1),
-  });
 
   // Form state
   const [nombre, setNombre] = useState('');
@@ -103,20 +106,6 @@ export default function RutasPage() {
   const [selectedDirecciones, setSelectedDirecciones] = useState<string[]>([]);
   const [showReassign, setShowReassign] = useState(false);
   const [targetRutaId, setTargetRutaId] = useState('');
-
-  // Fetch rutas
-  const { data, isLoading } = useQuery<RutasResponse>({
-    queryKey: ['admin-rutas', page, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (sortBy) params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      const res = await adminApiClient.get<RutasResponse>(`/admin/rutas?${params}`);
-      return res.data;
-    },
-  });
 
   // Fetch direcciones for selected ruta
   const { data: direccionesData, isLoading: loadingDirecciones } = useQuery<DireccionesResponse>({
@@ -138,7 +127,7 @@ export default function RutasPage() {
     },
     onSuccess: () => {
       toast({ title: 'Ruta creada', description: 'La ruta se creó correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-rutas'] });
+      refetch();
       handleCloseForm();
     },
     onError: (error: any) => {
@@ -164,7 +153,7 @@ export default function RutasPage() {
     },
     onSuccess: () => {
       toast({ title: 'Ruta actualizada', description: 'Los cambios se guardaron' });
-      queryClient.invalidateQueries({ queryKey: ['admin-rutas'] });
+      refetch();
       handleCloseForm();
     },
     onError: (error: any) => {
@@ -184,7 +173,7 @@ export default function RutasPage() {
     },
     onSuccess: () => {
       toast({ title: 'Ruta eliminada', description: 'La ruta se eliminó correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-rutas'] });
+      refetch();
       setDeleteRuta(null);
       setSelectedRuta(null);
     },
@@ -207,8 +196,8 @@ export default function RutasPage() {
     },
     onSuccess: (data) => {
       toast({ title: 'Direcciones reasignadas', description: data.message });
-      queryClient.invalidateQueries({ queryKey: ['admin-rutas'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-ruta-direcciones'] });
+      refetch();
+      // Direcciones will refetch when modal reopens;
       setShowReassign(false);
       setSelectedDirecciones([]);
       setTargetRutaId('');
@@ -342,7 +331,7 @@ export default function RutasPage() {
   ];
 
   // Filter out current ruta from dropdown
-  const otherRutas = data?.rutas.filter((r) => r.id !== selectedRuta?.id) || [];
+  const otherRutas = rutas.filter((r: Ruta) => r.id !== selectedRuta?.id);
 
   return (
     <AdminLayout
@@ -360,21 +349,12 @@ export default function RutasPage() {
     >
       <DataTable
         columns={columns}
-        data={data?.rutas || []}
+        data={rutas}
         keyExtractor={(ruta) => ruta.id}
-        isLoading={isLoading}
         emptyMessage="No hay rutas registradas"
         emptyIcon={<Map className="h-12 w-12 text-slate-300" />}
         onRowClick={handleRowClick}
-        pagination={
-          data?.pagination && {
-            page: data.pagination.page,
-            totalPages: data.pagination.totalPages,
-            total: data.pagination.total,
-            onPageChange: setPage,
-          }
-        }
-        sorting={{ sortBy, sortDirection, onSort: handleSort }}
+        {...tableProps}
       />
 
       {/* Detail/Direcciones Modal */}

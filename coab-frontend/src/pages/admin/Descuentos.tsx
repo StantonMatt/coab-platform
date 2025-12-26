@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { AdminLayout, DataTable, StatusBadge, PermissionGate, SortableHeader, useSortState, useCanAccess } from '@/components/admin';
+import { AdminLayout, DataTable, StatusBadge, PermissionGate, SortableHeader, useCanAccess, useAdminTable } from '@/components/admin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,10 +48,21 @@ const emptyForm: DescuentoFormData = {
 
 export default function AdminDescuentosPage() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const canEdit = useCanAccess('descuentos', 'edit');
   const canDelete = useCanAccess('descuentos', 'delete');
   const canApply = useCanAccess('descuentos', 'view');
+
+  // Use the admin table hook
+  const {
+    data: descuentos,
+    tableProps,
+    refetch,
+  } = useAdminTable<Descuento>({
+    endpoint: '/admin/descuentos',
+    queryKey: 'admin-descuentos',
+    dataKey: 'descuentos',
+    defaultSort: { column: 'nombre', direction: 'asc' },
+  });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -60,22 +71,6 @@ export default function AdminDescuentosPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<Descuento | null>(null);
   const [selectedDescuento, setSelectedDescuento] = useState<Descuento | null>(null);
 
-  // Use the sort hook - much cleaner!
-  const { sortBy, sortDirection, handleSort } = useSortState({
-    defaultColumn: 'nombre',
-    defaultDirection: 'asc',
-  });
-
-  const { data: descuentos, isLoading } = useQuery({
-    queryKey: ['admin', 'descuentos', sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (sortBy) params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      const res = await adminApi.get(`/admin/descuentos?${params}`);
-      return res.data.descuentos as Descuento[];
-    },
-  });
 
   const createMutation = useMutation({
     mutationFn: async (data: DescuentoFormData) => {
@@ -91,7 +86,7 @@ export default function AdminDescuentosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Descuento creado', description: 'El descuento se ha creado exitosamente.' });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'descuentos'] });
+      refetch();
       closeModal();
     },
     onError: () => {
@@ -113,7 +108,7 @@ export default function AdminDescuentosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Descuento actualizado', description: 'El descuento se ha actualizado.' });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'descuentos'] });
+      refetch();
       closeModal();
     },
     onError: () => {
@@ -127,7 +122,7 @@ export default function AdminDescuentosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Descuento eliminado', description: 'El descuento se ha eliminado.' });
-      queryClient.invalidateQueries({ queryKey: ['admin', 'descuentos'] });
+      refetch();
       setDeleteConfirm(null);
       setSelectedDescuento(null);
     },
@@ -253,14 +248,13 @@ export default function AdminDescuentosPage() {
     >
       {/* DataTable with sorting prop - provides context to SortableHeader */}
       <DataTable
-        data={descuentos || []}
+        data={descuentos}
         columns={columns}
-        isLoading={isLoading}
         keyExtractor={(d) => d.id.toString()}
         emptyMessage="No hay descuentos registrados."
         emptyIcon={<Tag className="h-12 w-12 text-slate-300" />}
         onRowClick={(d) => setSelectedDescuento(d)}
-        sorting={{ sortBy, sortDirection, onSort: handleSort }}
+        {...tableProps}
       />
 
       {/* Detail Modal */}

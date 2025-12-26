@@ -506,3 +506,27 @@ export async function getLecturasByCliente(clienteId: bigint, limit: number = 24
 
   return lecturas.map(transformLectura);
 }
+
+/**
+ * Get available periods (year-month) for lecturas - lightweight version
+ * Only returns distinct periods without boleta stats (single query, very fast)
+ * Use this for filter dropdowns; use pdf.service.getAvailablePeriods for boleta stats
+ */
+export async function getAvailablePeriodsLight(): Promise<{ año: number; mes: number }[]> {
+  const periods = await prisma.lecturas.findMany({
+    select: {
+      periodo_ano: true,
+      periodo_mes: true,
+    },
+    distinct: ['periodo_ano', 'periodo_mes'],
+    orderBy: [
+      { periodo_ano: 'desc' },
+      { periodo_mes: 'desc' },
+    ],
+  });
+
+  return periods.map(p => ({
+    año: p.periodo_ano,
+    mes: p.periodo_mes,
+  }));
+}

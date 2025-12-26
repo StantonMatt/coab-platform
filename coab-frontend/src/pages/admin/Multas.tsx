@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { AlertTriangle, Plus, Pencil, XCircle } from 'lucide-react';
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
 import { formatearPesos } from '@coab/utils';
-import { AdminLayout, DataTable, ConfirmDialog, PermissionGate, useCanAccess, SortableHeader, useSortState } from '@/components/admin';
+import { AdminLayout, DataTable, ConfirmDialog, PermissionGate, useCanAccess, SortableHeader, useAdminTable } from '@/components/admin';
 
 interface Multa {
   id: string;
@@ -26,10 +26,7 @@ interface Multa {
   cliente: { id: string; numeroCliente: string; nombre: string } | null;
 }
 
-interface MultasResponse {
-  multas: Multa[];
-  pagination: { total: number; page: number; limit: number; totalPages: number };
-}
+// Response type handled by useAdminTable
 
 // Status badge mapping
 const estadoStyles: Record<string, { label: string; className: string }> = {
@@ -40,48 +37,38 @@ const estadoStyles: Record<string, { label: string; className: string }> = {
 
 export default function MultasPage() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const _canCreate = useCanAccess('multas', 'create');
   void _canCreate; // For future use
   const canEdit = useCanAccess('multas', 'edit');
   const canCancel = useCanAccess('multas', 'cancel');
 
-  const [page, setPage] = useState(1);
+  // Use the admin table hook for data management
+  const {
+    data: multas,
+    tableProps,
+    refetch,
+  } = useAdminTable<Multa>({
+    endpoint: '/admin/multas',
+    queryKey: 'admin-multas',
+    dataKey: 'multas',
+    defaultSort: { column: 'numeroCliente', direction: 'asc' },
+  });
+
   const [showForm, setShowForm] = useState(false);
   const [editingMulta, setEditingMulta] = useState<Multa | null>(null);
   const [cancelMulta, setCancelMulta] = useState<Multa | null>(null);
   const [selectedMulta, setSelectedMulta] = useState<Multa | null>(null);
-
-  // Use the sort hook
-  const { sortBy, sortDirection, handleSort } = useSortState({
-    defaultColumn: 'numeroCliente',
-    defaultDirection: 'asc',
-    onSortChange: () => setPage(1),
-  });
 
   const [clienteId, setClienteId] = useState('');
   const [monto, setMonto] = useState('');
   const [motivo, setMotivo] = useState('');
   const [descripcion, setDescripcion] = useState('');
 
-  const { data, isLoading } = useQuery<MultasResponse>({
-    queryKey: ['admin-multas', page, sortBy, sortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', page.toString());
-      params.append('limit', '20');
-      if (sortBy) params.append('sortBy', sortBy);
-      params.append('sortDirection', sortDirection);
-      const res = await adminApiClient.get<MultasResponse>(`/admin/multas?${params}`);
-      return res.data;
-    },
-  });
-
   const createMutation = useMutation({
     mutationFn: async (data: any) => (await adminApiClient.post('/admin/multas', data)).data,
     onSuccess: () => {
       toast({ title: 'Multa creada' });
-      queryClient.invalidateQueries({ queryKey: ['admin-multas'] });
+      refetch();
       setShowForm(false);
     },
     onError: (e: any) => toast({ variant: 'destructive', title: 'Error', description: e.response?.data?.error?.message }),
@@ -91,7 +78,7 @@ export default function MultasPage() {
     mutationFn: async ({ id, data }: { id: string; data: any }) => (await adminApiClient.patch(`/admin/multas/${id}`, data)).data,
     onSuccess: () => {
       toast({ title: 'Multa actualizada' });
-      queryClient.invalidateQueries({ queryKey: ['admin-multas'] });
+      refetch();
       setShowForm(false);
     },
     onError: (e: any) => toast({ variant: 'destructive', title: 'Error', description: e.response?.data?.error?.message }),
@@ -101,7 +88,7 @@ export default function MultasPage() {
     mutationFn: async (id: string) => (await adminApiClient.post(`/admin/multas/${id}/cancelar`)).data,
     onSuccess: () => {
       toast({ title: 'Multa cancelada' });
-      queryClient.invalidateQueries({ queryKey: ['admin-multas'] });
+      refetch();
       setCancelMulta(null);
     },
     onError: (e: any) => toast({ variant: 'destructive', title: 'Error', description: e.response?.data?.error?.message }),
@@ -215,21 +202,12 @@ export default function MultasPage() {
     >
       <DataTable
         columns={columns}
-        data={data?.multas || []}
+        data={multas}
         keyExtractor={(m) => m.id}
-        isLoading={isLoading}
         emptyMessage="No hay multas"
         emptyIcon={<AlertTriangle className="h-12 w-12 text-slate-300" />}
         onRowClick={(multa) => setSelectedMulta(multa)}
-        pagination={
-          data?.pagination && {
-            page: data.pagination.page,
-            totalPages: data.pagination.totalPages,
-            total: data.pagination.total,
-            onPageChange: setPage,
-          }
-        }
-        sorting={{ sortBy, sortDirection, onSort: handleSort }}
+        {...tableProps}
       />
 
       {/* Detail Modal */}
