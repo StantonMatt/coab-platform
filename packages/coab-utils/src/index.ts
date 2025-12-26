@@ -30,7 +30,9 @@ export {
   formatearFechaLarga,
   formatearFechaHora,
   formatearPeriodo,
+  formatearFechaSinHora,
   FORMATOS_FECHA,
+  CHILE_TIMEZONE,
   localeES
 } from './dates.js';
 

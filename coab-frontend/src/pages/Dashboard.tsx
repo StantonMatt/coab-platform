@@ -11,9 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { formatearPesos } from '@coab/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { formatearPesos, formatearFecha, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import apiClient from '@/lib/api';
 import PaymentModal from '@/components/PaymentModal';
 import { CreditCard, Clock, CheckCircle, XCircle, AlertCircle, Download, Loader2 } from 'lucide-react';
@@ -296,9 +294,7 @@ export default function DashboardPage() {
                 <p className="font-medium">{notif.mensaje}</p>
                 <p className="text-sm mt-1 opacity-75">
                   Hasta:{' '}
-                  {format(new Date(notif.hasta), "d 'de' MMMM 'a las' HH:mm", {
-                    locale: es,
-                  })}
+                  {formatearFecha(notif.hasta, FORMATOS_FECHA.CON_HORA)}
                 </p>
               </div>
             ))}
@@ -327,7 +323,7 @@ export default function DashboardPage() {
               </p>
               {saldo?.fechaVencimiento && (
                 <p className="text-sm mt-3 opacity-90">
-                  Vence: {format(new Date(saldo.fechaVencimiento), 'dd/MM/yyyy')}
+                  Vence: {formatearFechaSinHora(saldo.fechaVencimiento, FORMATOS_FECHA.CORTO)}
                 </p>
               )}
               <p className="text-sm mt-1 opacity-75">
@@ -471,10 +467,7 @@ export default function DashboardPage() {
                       </p>
                       <p className="text-sm">
                         {formatearPesos(autopagoData.data.ultimoIntento.monto)} -{' '}
-                        {format(
-                          new Date(autopagoData.data.ultimoIntento.fecha),
-                          'dd/MM/yyyy HH:mm'
-                        )}
+                        {formatearFecha(autopagoData.data.ultimoIntento.fecha, FORMATOS_FECHA.CORTO_CON_HORA)}
                       </p>
                       {autopagoData.data.ultimoIntento.error && (
                         <p className="text-sm mt-1">
@@ -508,7 +501,7 @@ export default function DashboardPage() {
                               }`}
                             />
                             <span className="text-gray-600">
-                              {format(new Date(intento.fecha), 'dd/MM/yy')}
+                              {formatearFecha(intento.fecha, FORMATOS_FECHA.CORTO_ANIO_CORTO)}
                             </span>
                           </div>
                           <span className="font-medium">
@@ -570,7 +563,7 @@ export default function DashboardPage() {
                           {formatearPesos(pago.monto)}
                         </p>
                         <p className="text-sm text-gray-500">
-                          {format(new Date(pago.fechaPago), 'dd/MM/yyyy')}
+                          {formatearFechaSinHora(pago.fechaPago, FORMATOS_FECHA.CORTO)}
                         </p>
                       </div>
                       <span className="text-xs text-gray-500 capitalize bg-gray-100 px-2 py-1 rounded">
@@ -610,9 +603,7 @@ export default function DashboardPage() {
                     >
                       <div>
                         <p className="font-medium">
-                          {format(new Date(boleta.fechaEmision), 'MMMM yyyy', {
-                            locale: es,
-                          })}
+                          {formatearFechaSinHora(boleta.fechaEmision, FORMATOS_FECHA.MES_ANIO)}
                         </p>
                         <p className="text-sm text-gray-600">
                           {boleta.parcialmentePagada ? (

@@ -1,15 +1,13 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { AlertTriangle, Plus, Pencil, XCircle } from 'lucide-react';
+import { formatearPesos, formatearFecha, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
-import { formatearPesos } from '@coab/utils';
 import { AdminLayout, DataTable, ConfirmDialog, PermissionGate, useCanAccess, SortableHeader, useAdminTable } from '@/components/admin';
 
 interface Multa {
@@ -131,8 +129,7 @@ export default function MultasPage() {
   const formatPeriodo = (periodoDesde: string | null) => {
     if (!periodoDesde) return '-';
     try {
-      const date = new Date(periodoDesde);
-      return format(date, 'MMMM yyyy', { locale: es });
+      return formatearFechaSinHora(periodoDesde, FORMATOS_FECHA.MES_ANIO);
     } catch {
       return '-';
     }
@@ -257,7 +254,7 @@ export default function MultasPage() {
                 <div>
                   <span className="block text-slate-500">Fecha Creación</span>
                   <span className="font-medium">
-                    {format(new Date(selectedMulta.fechaCreacion), 'dd/MM/yyyy', { locale: es })}
+                    {formatearFecha(selectedMulta.fechaCreacion, FORMATOS_FECHA.CORTO)}
                   </span>
                 </div>
               </div>

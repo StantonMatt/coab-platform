@@ -6,9 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
-import { formatearRUT, formatearPesos } from '@coab/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { formatearRUT, formatearPesos, formatearFecha, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import {
   ArrowLeft,
   Lock,
@@ -425,7 +423,7 @@ export default function CustomerProfilePage() {
               <p className="font-medium text-red-800">Cuenta Bloqueada</p>
               <p className="text-sm text-red-700">
                 {customer.bloqueadoHasta
-                  ? `Bloqueada hasta: ${format(new Date(customer.bloqueadoHasta), "d 'de' MMMM 'a las' HH:mm", { locale: es })}`
+                  ? `Bloqueada hasta: ${formatearFecha(customer.bloqueadoHasta, FORMATOS_FECHA.CON_HORA)}`
                   : `Intentos fallidos: ${customer.intentosFallidos}`}
               </p>
             </div>
@@ -510,7 +508,7 @@ export default function CustomerProfilePage() {
                   <div>
                     <p className="text-xs text-slate-500">Cliente desde</p>
                     <p className="font-medium text-slate-900">
-                      {format(new Date(customer.fechaCreacion), 'dd/MM/yyyy')}
+                      {formatearFecha(customer.fechaCreacion, FORMATOS_FECHA.CORTO)}
                     </p>
                   </div>
                 </div>
@@ -581,11 +579,7 @@ export default function CustomerProfilePage() {
               <p className="text-xs text-slate-500 mt-2">
                 Último acceso:{' '}
                 {customer.ultimoInicioSesion
-                  ? format(
-                      new Date(customer.ultimoInicioSesion),
-                      "d MMM yyyy, HH:mm",
-                      { locale: es }
-                    )
+                  ? formatearFecha(customer.ultimoInicioSesion, FORMATOS_FECHA.CORTO_CON_HORA)
                   : 'Nunca'}
               </p>
             </CardContent>
@@ -693,19 +687,12 @@ export default function CustomerProfilePage() {
                                 <FileText className="h-4 w-4 text-blue-500 flex-shrink-0" />
                               )}
                               <span>
-                                {format(
-                                  new Date(boleta.fechaEmision),
-                                  'MMMM yyyy',
-                                  { locale: es }
-                                )}
+                                {formatearFechaSinHora(boleta.fechaEmision, FORMATOS_FECHA.MES_ANIO)}
                               </span>
                             </div>
                           </td>
                           <td className="px-4 py-3 text-slate-600">
-                            {format(
-                              new Date(boleta.fechaVencimiento),
-                              'dd/MM/yyyy'
-                            )}
+                            {formatearFechaSinHora(boleta.fechaVencimiento, FORMATOS_FECHA.CORTO)}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-600">
                             {boleta.consumoM3 !== null
@@ -779,10 +766,7 @@ export default function CustomerProfilePage() {
                       {paymentsData.data.map((pago: Pago) => (
                         <tr key={pago.id} className="hover:bg-slate-50">
                           <td className="px-4 py-3 text-slate-900">
-                            {format(
-                              new Date(pago.fechaPago),
-                              'dd/MM/yyyy HH:mm'
-                            )}
+                            {formatearFechaSinHora(pago.fechaPago, FORMATOS_FECHA.CORTO)}
                           </td>
                           <td className="px-4 py-3 text-slate-600 capitalize">
                             {pago.tipoPago}
@@ -826,18 +810,14 @@ export default function CustomerProfilePage() {
                     </p>
                     <p className="font-medium text-slate-900">
                       {customer.ultimoInicioSesion
-                        ? format(
-                            new Date(customer.ultimoInicioSesion),
-                            "d 'de' MMMM 'a las' HH:mm",
-                            { locale: es }
-                          )
+                        ? formatearFecha(customer.ultimoInicioSesion, FORMATOS_FECHA.CON_HORA)
                         : 'Nunca'}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-slate-500">Registrado</p>
                     <p className="font-medium text-slate-900">
-                      {format(new Date(customer.fechaCreacion), 'dd/MM/yyyy')}
+                      {formatearFecha(customer.fechaCreacion, FORMATOS_FECHA.CORTO)}
                     </p>
                   </div>
                 </div>
@@ -891,7 +871,7 @@ export default function CustomerProfilePage() {
                           </td>
                           <td className="px-4 py-3 text-slate-600">
                             {medidor.fecha_instalacion 
-                              ? format(new Date(medidor.fecha_instalacion), 'dd/MM/yyyy')
+                              ? formatearFechaSinHora(medidor.fecha_instalacion, FORMATOS_FECHA.CORTO)
                               : '-'}
                           </td>
                         </tr>
@@ -936,7 +916,7 @@ export default function CustomerProfilePage() {
                       {lecturasData.lecturas.map((lectura: Lectura) => (
                         <tr key={lectura.id} className="hover:bg-slate-50">
                           <td className="px-4 py-3 text-slate-900">
-                            {format(new Date(lectura.fecha_lectura), 'dd/MM/yyyy')}
+                            {formatearFechaSinHora(lectura.fecha_lectura, FORMATOS_FECHA.CORTO)}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-600">
                             {lectura.lectura_anterior}
@@ -992,7 +972,7 @@ export default function CustomerProfilePage() {
                       {multasData.multas.map((multa: Multa) => (
                         <tr key={multa.id} className="hover:bg-slate-50">
                           <td className="px-4 py-3 text-slate-900">
-                            {format(new Date(multa.fecha_multa), 'dd/MM/yyyy')}
+                            {formatearFechaSinHora(multa.fecha_multa, FORMATOS_FECHA.CORTO)}
                           </td>
                           <td className="px-4 py-3 text-slate-600 capitalize">
                             {multa.tipo}
@@ -1057,7 +1037,7 @@ export default function CustomerProfilePage() {
                       {repactacionesData.repactaciones.map((repactacion: Repactacion) => (
                         <tr key={repactacion.id} className="hover:bg-slate-50">
                           <td className="px-4 py-3 text-slate-900">
-                            {format(new Date(repactacion.fecha_inicio), 'dd/MM/yyyy')}
+                            {formatearFechaSinHora(repactacion.fecha_inicio, FORMATOS_FECHA.CORTO)}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-600">
                             {formatearPesos(repactacion.monto_original)}

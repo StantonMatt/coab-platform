@@ -21,9 +21,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import apiClient from '@/lib/api';
-import { formatearPesos } from '@coab/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { formatearPesos, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import {
   Loader2,
   CreditCard,
@@ -604,9 +602,7 @@ export default function PaymentModal({
                               >
                                 <div className="flex justify-between items-center">
                                   <span className="flex items-center gap-2">
-                                    {format(new Date(boleta.fechaEmision), 'MMMM yyyy', {
-                                      locale: es,
-                                    })}
+                                    {formatearFechaSinHora(boleta.fechaEmision, FORMATOS_FECHA.MES_ANIO)}
                                     {boleta.parcialmentePagada && (
                                       <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
                                         parcial

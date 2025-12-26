@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { Gauge, Plus, Pencil, Trash2, Search, MapPin, Check } from 'lucide-react';
+import { formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -355,7 +354,7 @@ export default function MedidoresPage() {
               {medidor.ultimaLectura.lectura.toLocaleString()}
             </span>
             <div className="text-xs text-slate-500">
-              {format(new Date(medidor.ultimaLectura.fecha), 'dd/MM/yy', { locale: es })}
+              {formatearFechaSinHora(medidor.ultimaLectura.fecha, FORMATOS_FECHA.CORTO_ANIO_CORTO)}
             </div>
           </div>
         ) : (
@@ -508,7 +507,7 @@ export default function MedidoresPage() {
                   <div>
                     <span className="block text-slate-500">Fecha Instalación</span>
                     <span className="font-medium">
-                      {format(new Date(selectedMedidor.fechaInstalacion), 'dd/MM/yyyy', { locale: es })}
+                      {formatearFechaSinHora(selectedMedidor.fechaInstalacion, FORMATOS_FECHA.CORTO)}
                     </span>
                   </div>
                 )}
@@ -516,7 +515,7 @@ export default function MedidoresPage() {
                   <div>
                     <span className="block text-slate-500">Fecha Retiro</span>
                     <span className="font-medium">
-                      {format(new Date(selectedMedidor.fechaRetiro), 'dd/MM/yyyy', { locale: es })}
+                      {formatearFechaSinHora(selectedMedidor.fechaRetiro, FORMATOS_FECHA.CORTO)}
                     </span>
                   </div>
                 )}
@@ -530,7 +529,7 @@ export default function MedidoresPage() {
                     <span className="font-medium">
                       {selectedMedidor.ultimaLectura.lectura.toLocaleString()}
                       <span className="text-xs text-slate-400 ml-1">
-                        ({format(new Date(selectedMedidor.ultimaLectura.fecha), 'dd/MM/yy', { locale: es })})
+                        ({formatearFechaSinHora(selectedMedidor.ultimaLectura.fecha, FORMATOS_FECHA.CORTO_ANIO_CORTO)})
                       </span>
                     </span>
                   </div>

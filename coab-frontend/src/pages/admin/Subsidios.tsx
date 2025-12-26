@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { Percent, Plus, Pencil, Trash2, Check, Search, UserPlus, UserMinus } from 'lucide-react';
+import { formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -482,7 +481,7 @@ export default function SubsidiosPage() {
       headerClassName: 'hidden sm:table-cell',
       render: (entry: HistorialEntry) =>
         entry.fechaCambio
-          ? format(new Date(entry.fechaCambio), 'dd/MM/yyyy', { locale: es })
+          ? formatearFechaSinHora(entry.fechaCambio, FORMATOS_FECHA.CORTO)
           : '-',
     },
   ];
@@ -609,14 +608,14 @@ export default function SubsidiosPage() {
                 <div>
                   <span className="text-slate-500">Fecha Inicio</span>
                   <p className="font-medium">
-                    {format(new Date(selectedSubsidio.fechaInicio), 'dd/MM/yyyy', { locale: es })}
+                    {formatearFechaSinHora(selectedSubsidio.fechaInicio, FORMATOS_FECHA.CORTO)}
                   </p>
                 </div>
                 <div>
                   <span className="text-slate-500">Fecha Término</span>
                   <p className="font-medium">
                     {selectedSubsidio.fechaTermino
-                      ? format(new Date(selectedSubsidio.fechaTermino), 'dd/MM/yyyy', { locale: es })
+                      ? formatearFechaSinHora(selectedSubsidio.fechaTermino, FORMATOS_FECHA.CORTO)
                       : 'Sin fecha fin'}
                   </p>
                 </div>
@@ -699,7 +698,7 @@ export default function SubsidiosPage() {
                   <span className="text-slate-500">Fecha</span>
                   <p className="font-medium">
                     {selectedHistorial.fechaCambio
-                      ? format(new Date(selectedHistorial.fechaCambio), 'dd/MM/yyyy', { locale: es })
+                      ? formatearFechaSinHora(selectedHistorial.fechaCambio, FORMATOS_FECHA.CORTO)
                       : '-'}
                   </p>
                 </div>

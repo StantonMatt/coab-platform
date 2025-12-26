@@ -10,9 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import apiClient from '@/lib/api';
-import { formatearPesos } from '@coab/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { formatearPesos, formatearFecha, FORMATOS_FECHA } from '@coab/utils';
 import { CheckCircle2, XCircle, Clock, Loader2, ArrowLeft } from 'lucide-react';
 
 interface TransactionDetail {
@@ -199,9 +197,7 @@ export default function PaymentResultPage() {
             <div className="flex justify-between">
               <span className="text-slate-500">Fecha</span>
               <span className="font-medium">
-                {format(new Date(transaction.creadoEn), "d 'de' MMMM, HH:mm", {
-                  locale: es,
-                })}
+                {formatearFecha(transaction.creadoEn, FORMATOS_FECHA.CON_HORA)}
               </span>
             </div>
           </div>

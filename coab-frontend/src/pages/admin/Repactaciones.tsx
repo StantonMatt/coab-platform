@@ -33,9 +33,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
 import { Plus, RefreshCw, Check, X, Search } from 'lucide-react';
-import { formatearPesos } from '@coab/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { formatearPesos, formatearFecha, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 
 interface Repactacion {
   id: string;
@@ -329,7 +327,7 @@ export default function AdminRepactacionesPage() {
       key: 'fechaInicio',
       header: <SortableHeader column="fechaInicio" label="Inicio" />,
       render: (r: Repactacion) =>
-        r.fechaInicio ? format(new Date(r.fechaInicio), 'dd/MM/yyyy', { locale: es }) : '-',
+        r.fechaInicio ? formatearFechaSinHora(r.fechaInicio, FORMATOS_FECHA.CORTO) : '-',
     },
   ];
 
@@ -369,7 +367,7 @@ export default function AdminRepactacionesPage() {
       className: 'hidden sm:table-cell',
       headerClassName: 'hidden sm:table-cell',
       render: (s: SolicitudRepactacion) =>
-        s.creadoEn ? format(new Date(s.creadoEn), 'dd/MM/yyyy', { locale: es }) : '-',
+        s.creadoEn ? formatearFecha(s.creadoEn, FORMATOS_FECHA.CORTO) : '-',
     },
     {
       key: 'acciones',
@@ -538,7 +536,7 @@ export default function AdminRepactacionesPage() {
                   <span className="block text-slate-500">Fecha Inicio</span>
                   <span className="font-medium">
                     {selectedRepactacion.fechaInicio
-                      ? format(new Date(selectedRepactacion.fechaInicio), 'dd/MM/yyyy', { locale: es })
+                      ? formatearFechaSinHora(selectedRepactacion.fechaInicio, FORMATOS_FECHA.CORTO)
                       : '-'}
                   </span>
                 </div>

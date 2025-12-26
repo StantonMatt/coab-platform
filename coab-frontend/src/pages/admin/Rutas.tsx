@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { Map, Plus, Pencil, Trash2, ArrowRightLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { formatearFecha, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -314,7 +313,7 @@ export default function RutasPage() {
       headerClassName: 'hidden lg:table-cell',
       render: (ruta: Ruta) => (
         <span className="text-sm text-slate-500">
-          {format(new Date(ruta.fechaActualizacion), 'dd/MM/yyyy', { locale: es })}
+          {formatearFecha(ruta.fechaActualizacion, FORMATOS_FECHA.CORTO)}
         </span>
       ),
     },

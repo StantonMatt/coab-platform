@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { Scissors, Plus, Search, RefreshCcw } from 'lucide-react';
+import { formatearPesos, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,7 +22,6 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
-import { formatearPesos } from '@coab/utils';
 import {
   AdminLayout,
   DataTable,
@@ -182,7 +180,7 @@ export default function AdminCortesPage() {
       key: 'fechaCorte',
       header: <SortableHeader column="fechaCorte" label="Fecha Corte" />,
       render: (c: CorteServicio) =>
-        c.fechaCorte ? format(new Date(c.fechaCorte), 'dd/MM/yyyy', { locale: es }) : '-',
+        c.fechaCorte ? formatearFechaSinHora(c.fechaCorte, FORMATOS_FECHA.CORTO) : '-',
     },
     {
       key: 'motivoCorte',
@@ -202,7 +200,7 @@ export default function AdminCortesPage() {
       key: 'fechaReposicion',
       header: <SortableHeader column="fechaReposicion" label="Reposición" />,
       render: (c: CorteServicio) =>
-        c.fechaReposicion ? format(new Date(c.fechaReposicion), 'dd/MM/yyyy', { locale: es }) : '-',
+        c.fechaReposicion ? formatearFechaSinHora(c.fechaReposicion, FORMATOS_FECHA.CORTO) : '-',
     },
   ];
 
@@ -284,7 +282,7 @@ export default function AdminCortesPage() {
                   <span className="block text-slate-500">Fecha de Corte</span>
                   <span className="font-medium">
                     {selectedCorte.fechaCorte
-                      ? format(new Date(selectedCorte.fechaCorte), 'dd/MM/yyyy', { locale: es })
+                      ? formatearFechaSinHora(selectedCorte.fechaCorte, FORMATOS_FECHA.CORTO)
                       : '-'}
                   </span>
                 </div>
@@ -296,7 +294,7 @@ export default function AdminCortesPage() {
                   <div>
                     <span className="block text-slate-500">Fecha de Reposición</span>
                     <span className="font-medium">
-                      {format(new Date(selectedCorte.fechaReposicion), 'dd/MM/yyyy', { locale: es })}
+                      {formatearFechaSinHora(selectedCorte.fechaReposicion, FORMATOS_FECHA.CORTO)}
                     </span>
                   </div>
                 )}

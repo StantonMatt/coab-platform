@@ -1,15 +1,20 @@
 /**
  * Chilean date formatting utilities
  * 
- * Uses date-fns with Spanish (es) locale
+ * Uses date-fns with date-fns-tz for proper Chile timezone handling
  * Common Chilean formats:
  * - dd/MM/yyyy (e.g., 15/10/2025)
  * - d 'de' MMMM 'de' yyyy (e.g., 15 de octubre de 2025)
  * - d 'de' MMMM 'a las' HH:mm (e.g., 15 de octubre a las 14:30)
  */
 
-import { format as dateFnsFormat } from 'date-fns';
+import { formatInTimeZone } from 'date-fns-tz';
 import { es } from 'date-fns/locale';
+
+/**
+ * Chile timezone constant
+ */
+export const CHILE_TIMEZONE = 'America/Santiago';
 
 /**
  * Common Chilean date formats
@@ -27,22 +32,27 @@ export const FORMATOS_FECHA = {
   HORA: 'HH:mm',
   /** 15/10/2025 14:30 */
   CORTO_CON_HORA: 'dd/MM/yyyy HH:mm',
+  /** 15/10/25 (short year) */
+  CORTO_ANIO_CORTO: 'dd/MM/yy',
 } as const;
 
 /**
- * Formats a date using Chilean locale (es-CL)
- * @param date - Date to format
+ * Formats a date using Chilean timezone (America/Santiago)
+ * This ensures dates are always displayed correctly regardless of the user's browser timezone.
+ * 
+ * @param date - Date to format (Date object or ISO string)
  * @param formato - Format string (use FORMATOS_FECHA constants)
- * @returns Formatted date string
+ * @returns Formatted date string in Chilean timezone
  * 
  * @example
  * formatearFecha(new Date(), FORMATOS_FECHA.CORTO)    // '15/10/2025'
  * formatearFecha(new Date(), FORMATOS_FECHA.LARGO)    // '15 de octubre de 2025'
  * formatearFecha(new Date(), FORMATOS_FECHA.CON_HORA) // '15 de octubre a las 14:30'
+ * formatearFecha('2024-01-15T00:00:00.000Z', FORMATOS_FECHA.CORTO) // '15/01/2024' (not 14/01!)
  */
 export function formatearFecha(date: Date | string, formato: string = FORMATOS_FECHA.CORTO): string {
   const dateObj = typeof date === 'string' ? new Date(date) : date;
-  return dateFnsFormat(dateObj, formato, { locale: es });
+  return formatInTimeZone(dateObj, CHILE_TIMEZONE, formato, { locale: es });
 }
 
 /**
@@ -82,7 +92,37 @@ export function formatearPeriodo(date: Date | string): string {
 }
 
 /**
+ * Formats a DATE field from the database (stored as midnight UTC).
+ * This function extracts the UTC date components WITHOUT timezone conversion,
+ * preventing dates like "2024-01-01 00:00:00+00" from displaying as "31/12/2023".
+ * 
+ * Use this for PostgreSQL DATE columns (not TIMESTAMPTZ).
+ * 
+ * @param date - Date to format (Date object or ISO string from database)
+ * @param formato - Format string (use FORMATOS_FECHA constants, but without time components)
+ * @returns Formatted date string preserving the original UTC date
+ * 
+ * @example
+ * // Database has: 2024-01-01 00:00:00+00
+ * formatearFechaSinHora('2024-01-01T00:00:00.000Z', FORMATOS_FECHA.CORTO) // '01/01/2024' ✓
+ * formatearFecha('2024-01-01T00:00:00.000Z', FORMATOS_FECHA.CORTO)        // '31/12/2023' ✗
+ */
+export function formatearFechaSinHora(date: Date | string, formato: string = FORMATOS_FECHA.CORTO): string {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  
+  // Extract UTC date components to avoid timezone shift
+  const year = dateObj.getUTCFullYear();
+  const month = dateObj.getUTCMonth();
+  const day = dateObj.getUTCDate();
+  
+  // Create a new date at noon UTC to avoid any edge cases, then format in UTC
+  const utcNoon = new Date(Date.UTC(year, month, day, 12, 0, 0));
+  
+  // Format in UTC timezone to preserve the original date
+  return formatInTimeZone(utcNoon, 'UTC', formato, { locale: es });
+}
+
+/**
  * Re-export es locale for direct use with date-fns
  */
 export { es as localeES } from 'date-fns/locale';
-

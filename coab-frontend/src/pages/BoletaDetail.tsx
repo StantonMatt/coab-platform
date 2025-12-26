@@ -3,9 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { formatearPesos } from '@coab/utils';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { formatearPesos, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import apiClient from '@/lib/api';
 
 interface BoletaDetail {
@@ -89,9 +87,7 @@ export default function BoletaDetailPage() {
   }
 
   // Format period
-  const periodo = format(new Date(boleta.fechaEmision), 'MMMM yyyy', {
-    locale: es,
-  });
+  const periodo = formatearFechaSinHora(boleta.fechaEmision, FORMATOS_FECHA.MES_ANIO);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -153,13 +149,13 @@ export default function BoletaDetailPage() {
               <div>
                 <p className="text-sm text-gray-500">Fecha Emisión</p>
                 <p className="font-medium">
-                  {format(new Date(boleta.fechaEmision), 'dd/MM/yyyy')}
+                  {formatearFechaSinHora(boleta.fechaEmision, FORMATOS_FECHA.CORTO)}
                 </p>
               </div>
               <div>
                 <p className="text-sm text-gray-500">Vencimiento</p>
                 <p className="font-medium">
-                  {format(new Date(boleta.fechaVencimiento), 'dd/MM/yyyy')}
+                  {formatearFechaSinHora(boleta.fechaVencimiento, FORMATOS_FECHA.CORTO)}
                 </p>
               </div>
             </div>

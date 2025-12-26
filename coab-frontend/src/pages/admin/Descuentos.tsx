@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import {
   AdminLayout,
   DataTable,
@@ -47,7 +45,7 @@ import {
   Search,
   Filter,
 } from 'lucide-react';
-import { formatearPesos } from '@coab/utils';
+import { formatearPesos, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 
 // ============================================================================
 // Types
@@ -413,7 +411,7 @@ export default function AdminDescuentosPage() {
       render: (da: DescuentoAplicado) => (
         <span className="text-sm text-slate-600">
           {da.fechaAplicacion
-            ? format(new Date(da.fechaAplicacion), 'dd/MM/yyyy', { locale: es })
+            ? formatearFechaSinHora(da.fechaAplicacion, FORMATOS_FECHA.CORTO)
             : '-'}
         </span>
       ),
@@ -470,8 +468,8 @@ export default function AdminDescuentosPage() {
       headerClassName: 'hidden md:table-cell',
       render: (d: Descuento) => (
         <span className="text-sm text-slate-600">
-          {d.fechaInicio ? format(new Date(d.fechaInicio), 'dd/MM/yyyy', { locale: es }) : '-'}
-          {d.fechaFin && ` - ${format(new Date(d.fechaFin), 'dd/MM/yyyy', { locale: es })}`}
+          {d.fechaInicio ? formatearFechaSinHora(d.fechaInicio, FORMATOS_FECHA.CORTO) : '-'}
+          {d.fechaFin && ` - ${formatearFechaSinHora(d.fechaFin, FORMATOS_FECHA.CORTO)}`}
         </span>
       ),
     },
@@ -696,9 +694,7 @@ export default function AdminDescuentosPage() {
                   <span className="text-slate-500">Fecha de Aplicación</span>
                   <p className="font-medium">
                     {selectedAplicado.fechaAplicacion
-                      ? format(new Date(selectedAplicado.fechaAplicacion), "d 'de' MMMM 'de' yyyy", {
-                          locale: es,
-                        })
+                      ? formatearFechaSinHora(selectedAplicado.fechaAplicacion, FORMATOS_FECHA.LARGO)
                       : '-'}
                   </p>
                 </div>
@@ -766,7 +762,7 @@ export default function AdminDescuentosPage() {
                   <span className="text-slate-500">Fecha Inicio</span>
                   <p className="font-medium">
                     {selectedPlantilla.fechaInicio
-                      ? format(new Date(selectedPlantilla.fechaInicio), 'dd/MM/yyyy', { locale: es })
+                      ? formatearFechaSinHora(selectedPlantilla.fechaInicio, FORMATOS_FECHA.CORTO)
                       : '-'}
                   </p>
                 </div>
@@ -774,7 +770,7 @@ export default function AdminDescuentosPage() {
                   <span className="text-slate-500">Fecha Fin</span>
                   <p className="font-medium">
                     {selectedPlantilla.fechaFin
-                      ? format(new Date(selectedPlantilla.fechaFin), 'dd/MM/yyyy', { locale: es })
+                      ? formatearFechaSinHora(selectedPlantilla.fechaFin, FORMATOS_FECHA.CORTO)
                       : 'Sin fecha fin'}
                   </p>
                 </div>

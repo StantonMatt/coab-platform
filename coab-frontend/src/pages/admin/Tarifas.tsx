@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { DollarSign, Plus, Pencil, Trash2, Check } from 'lucide-react';
+import { formatearPesos, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -14,7 +13,6 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
-import { formatearPesos } from '@coab/utils';
 import {
   AdminLayout,
   DataTable,
@@ -238,7 +236,7 @@ export default function TarifasPage() {
         <div>
           <div className="flex items-center gap-2">
             <span className="font-medium text-slate-900">
-              {format(new Date(tarifa.fechaInicio), 'dd/MM/yyyy', { locale: es })}
+              {formatearFechaSinHora(tarifa.fechaInicio, FORMATOS_FECHA.CORTO)}
             </span>
             {tarifa.esVigente && (
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
@@ -249,7 +247,7 @@ export default function TarifasPage() {
           </div>
           {tarifa.fechaFin && (
             <span className="text-xs text-slate-500">
-              hasta {format(new Date(tarifa.fechaFin), 'dd/MM/yyyy', { locale: es })}
+              hasta {formatearFechaSinHora(tarifa.fechaFin, FORMATOS_FECHA.CORTO)}
             </span>
           )}
         </div>
@@ -331,8 +329,8 @@ export default function TarifasPage() {
             <div className="space-y-4">
               <div className="flex items-center gap-2 mb-4">
                 <span className="text-sm text-slate-500">
-                  Vigente desde {format(new Date(selectedTarifa.fechaInicio), 'dd/MM/yyyy', { locale: es })}
-                  {selectedTarifa.fechaFin && ` hasta ${format(new Date(selectedTarifa.fechaFin), 'dd/MM/yyyy', { locale: es })}`}
+                  Vigente desde {formatearFechaSinHora(selectedTarifa.fechaInicio, FORMATOS_FECHA.CORTO)}
+                  {selectedTarifa.fechaFin && ` hasta ${formatearFechaSinHora(selectedTarifa.fechaFin, FORMATOS_FECHA.CORTO)}`}
                 </span>
                 {selectedTarifa.esVigente && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">

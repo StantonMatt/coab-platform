@@ -1,8 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
 import { FileText, Pencil, AlertCircle, Search, CheckCircle, MapPin, Gauge } from 'lucide-react';
+import { formatearFecha, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -269,7 +268,7 @@ export default function LecturasPage() {
 
   const formatPeriodo = (ano: number, mes: number) => {
     const date = new Date(ano, mes - 1, 1);
-    return format(date, 'MMMM yyyy', { locale: es });
+    return formatearFecha(date, FORMATOS_FECHA.MES_ANIO);
   };
 
   // Helper for warning styles
@@ -440,7 +439,7 @@ export default function LecturasPage() {
             {!filters.periodoAno && <SelectItem value="all">Todos los meses</SelectItem>}
             {availableMonthsForYear.map((month) => (
               <SelectItem key={month} value={month.toString()}>
-                {format(new Date(2000, month - 1, 1), 'MMMM', { locale: es })}
+                {formatearFecha(new Date(2000, month - 1, 1), 'MMMM')}
               </SelectItem>
             ))}
           </SelectContent>
@@ -489,7 +488,7 @@ export default function LecturasPage() {
                 </h3>
                 <p className="text-sm text-slate-600">
                   Fecha de lectura: {selectedLectura.fechaLectura 
-                    ? format(new Date(selectedLectura.fechaLectura), "d 'de' MMMM 'de' yyyy", { locale: es })
+                    ? formatearFechaSinHora(selectedLectura.fechaLectura, FORMATOS_FECHA.LARGO)
                     : 'No registrada'}
                 </p>
               </div>
@@ -657,7 +656,7 @@ export default function LecturasPage() {
                     <p><strong>Valor corregido:</strong> {selectedLectura.correccion.valorCorregido.toLocaleString()}</p>
                     <p><strong>Motivo:</strong> {selectedLectura.correccion.motivoCorreccion}</p>
                     <p><strong>Corregido por:</strong> {selectedLectura.correccion.corregidoPor}</p>
-                    <p><strong>Fecha:</strong> {format(new Date(selectedLectura.correccion.fechaCorreccion), 'dd/MM/yyyy HH:mm', { locale: es })}</p>
+                    <p><strong>Fecha:</strong> {formatearFecha(selectedLectura.correccion.fechaCorreccion, FORMATOS_FECHA.CORTO_CON_HORA)}</p>
                   </div>
                 </div>
               )}
