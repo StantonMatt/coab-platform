@@ -366,6 +366,11 @@ model subsidio_historial {
   numero_cliente String
   cliente        clientes   @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   subsidio       subsidios? @relation(fields: [subsidio_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([cliente_id], map: "idx_subsidio_historial_cliente")
+  @@index([subsidio_id], map: "idx_subsidio_historial_subsidio")
+  @@index([fecha_cambio], map: "idx_subsidio_historial_fecha")
+  @@index([cliente_id, subsidio_id], map: "idx_subsidio_historial_cliente_subsidio")
 }
 
 model tarifas {

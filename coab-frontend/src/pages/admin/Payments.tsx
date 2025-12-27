@@ -113,6 +113,9 @@ export default function PaymentsPage() {
     dataKey: 'pagos',
     defaultSort: { column: 'fecha', direction: 'desc' },
     defaultFilters: { q: '', fechaDesde: '', fechaHasta: '', tipoPago: '', estado: '' },
+    debouncedFilterKeys: ['q'], // Debounce search input
+    debounceMs: 300,
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   // Get resumen from raw response

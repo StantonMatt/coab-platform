@@ -1,7 +1,25 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import adminApiClient from '@/lib/adminApi';
 import { useSortState, UseSortStateReturn } from './SortableHeader';
+
+// ============================================
+// Debounce Hook
+// ============================================
+
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+
+  return debouncedValue;
+}
 
 // ============================================
 // Types
@@ -47,6 +65,18 @@ export interface UseAdminTableOptions<TFilters extends Record<string, unknown> =
   customQueryFn?: (params: URLSearchParams) => Promise<unknown>;
   /** Whether the query should be enabled (default: true) */
   enabled?: boolean;
+  /** 
+   * Filter keys that should be debounced (e.g., ['search', 'q'])
+   * These filters will wait for debounceMs before triggering API calls
+   */
+  debouncedFilterKeys?: (keyof TFilters)[];
+  /** Debounce delay in milliseconds (default: 300) */
+  debounceMs?: number;
+  /** 
+   * Cache time for data queries in milliseconds (default: 30000)
+   * Data won't refetch if it's younger than this
+   */
+  dataStaleTime?: number;
 }
 
 export interface UseAdminTableReturn<TData, TFilters extends Record<string, unknown>, TMetadata, TResponse = unknown> {
@@ -58,6 +88,8 @@ export interface UseAdminTableReturn<TData, TFilters extends Record<string, unkn
   isLoading: boolean;
   /** Just the data loading state */
   isLoadingData: boolean;
+  /** Whether a background refetch is in progress (for subtle loading indicators) */
+  isFetching: boolean;
   /** Metadata loading state */
   isLoadingMetadata: boolean;
   /** Error state */
@@ -157,6 +189,9 @@ export function useAdminTable<
     onMetadataLoaded,
     waitForMetadata = false,
     enabled = true,
+    debouncedFilterKeys = [],
+    debounceMs = 300,
+    dataStaleTime = 30000, // 30 seconds default cache
   } = options;
 
   // ============================================
@@ -166,6 +201,38 @@ export function useAdminTable<
   const [page, setPage] = useState(1);
   const [filters, setFiltersState] = useState<TFilters>(defaultFilters);
   const [filtersInitialized, setFiltersInitialized] = useState(!metadataEndpoint || !onMetadataLoaded);
+
+  // Track debounced filter keys for stable reference
+  const debouncedKeysRef = useRef(new Set(debouncedFilterKeys as string[]));
+  useEffect(() => {
+    debouncedKeysRef.current = new Set(debouncedFilterKeys as string[]);
+  }, [debouncedFilterKeys]);
+
+  // Extract values that need debouncing vs immediate values
+  const debouncedFilterValues = useMemo(() => {
+    const result: Partial<TFilters> = {};
+    for (const key of debouncedKeysRef.current) {
+      if (key in filters) {
+        result[key as keyof TFilters] = filters[key as keyof TFilters];
+      }
+    }
+    return result;
+  }, [filters]);
+
+  // Debounce the extracted values
+  const debouncedValues = useDebouncedValue(debouncedFilterValues, debounceMs);
+
+  // Combine immediate and debounced filters for the query
+  const queryFilters = useMemo(() => {
+    const result = { ...filters };
+    // Override debounced keys with their debounced values
+    for (const key of debouncedKeysRef.current) {
+      if (key in debouncedValues) {
+        result[key as keyof TFilters] = debouncedValues[key as keyof TFilters] as TFilters[keyof TFilters];
+      }
+    }
+    return result;
+  }, [filters, debouncedValues]);
 
   // Reset page when filters change
   const handlePageReset = useCallback(() => {
@@ -226,10 +293,12 @@ export function useAdminTable<
   const {
     data: responseData,
     isLoading: isLoadingData,
+    isFetching,
     error,
     refetch,
   } = useQuery({
-    queryKey: [queryKey, page, filters, sorting.sortBy, sorting.sortDirection],
+    // Use queryFilters (with debounced values) for the query key
+    queryKey: [queryKey, page, queryFilters, sorting.sortBy, sorting.sortDirection],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append('page', page.toString());
@@ -241,8 +310,8 @@ export function useAdminTable<
         params.append('sortDirection', sorting.sortDirection);
       }
       
-      // Add filters
-      Object.entries(filters).forEach(([key, value]) => {
+      // Add filters (using debounced queryFilters)
+      Object.entries(queryFilters).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== '') {
           params.append(key, String(value));
         }
@@ -252,6 +321,7 @@ export function useAdminTable<
       return res.data as PaginationResponse<TData>;
     },
     enabled: shouldFetchData,
+    staleTime: dataStaleTime, // Cache data to reduce refetches
   });
 
   // Extract data array and pagination
@@ -318,6 +388,7 @@ export function useAdminTable<
     rawResponse: responseData as unknown ?? null,
     isLoading,
     isLoadingData,
+    isFetching,
     isLoadingMetadata,
     error: error as Error | null,
     pagination,

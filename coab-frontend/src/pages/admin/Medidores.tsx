@@ -114,6 +114,9 @@ export default function MedidoresPage() {
     dataKey: 'medidores',
     defaultSort: { column: 'fechaInstalacion', direction: 'desc' },
     defaultFilters: { estado: '', search: '' },
+    debouncedFilterKeys: ['search'], // Debounce search input
+    debounceMs: 300,
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   const [showForm, setShowForm] = useState(false);

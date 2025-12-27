@@ -50,6 +50,7 @@ export default function MultasPage() {
     queryKey: 'admin-multas',
     dataKey: 'multas',
     defaultSort: { column: 'numeroCliente', direction: 'asc' },
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   const [showForm, setShowForm] = useState(false);

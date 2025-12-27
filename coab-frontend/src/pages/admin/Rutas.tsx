@@ -79,6 +79,7 @@ export default function RutasPage() {
     queryKey: 'admin-rutas',
     dataKey: 'rutas',
     defaultSort: { column: 'nombre', direction: 'asc' },
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   const [showForm, setShowForm] = useState(false);

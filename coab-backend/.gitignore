@@ -30,6 +30,9 @@ npm-debug.log*
 # Test coverage
 coverage/
 
+# Imported files (local data, not version controlled)
+imported_files/
+
 
 
 

@@ -152,6 +152,9 @@ export default function AdminDescuentosPage() {
     defaultSort: { column: 'fecha', direction: 'desc' },
     defaultFilters: { search: '', estado: '', tipo: '' },
     enabled: activeTab === 'aplicados',
+    debouncedFilterKeys: ['search'], // Debounce search input
+    debounceMs: 300,
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   // ============================================================================
@@ -168,6 +171,7 @@ export default function AdminDescuentosPage() {
     dataKey: 'descuentos',
     defaultSort: { column: 'nombre', direction: 'asc' },
     enabled: activeTab === 'plantillas',
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   // ============================================================================

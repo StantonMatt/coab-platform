@@ -1639,6 +1639,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
           search: z.string().optional(),
           sortBy: z.enum(['cliente', 'subsidio', 'fechaCambio', 'tipoCambio']).optional().default('fechaCambio'),
           sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
+          esActivo: z.enum(['activo', 'inactivo']).optional(),
         })
         .parse(request.query);
 
@@ -1650,6 +1651,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         search: query.search,
         sortBy: query.sortBy,
         sortDirection: query.sortDirection,
+        esActivo: query.esActivo,
       });
       return result;
     } catch (error: any) {

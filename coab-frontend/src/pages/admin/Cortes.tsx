@@ -99,6 +99,9 @@ export default function AdminCortesPage() {
     dataKey: 'cortes',
     defaultSort: { column: 'fechaCorte', direction: 'desc' },
     defaultFilters: { estado: '', search: '' },
+    debouncedFilterKeys: ['search'], // Debounce search input
+    debounceMs: 300,
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   const [isModalOpen, setIsModalOpen] = useState(false);

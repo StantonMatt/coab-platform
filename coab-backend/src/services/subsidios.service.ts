@@ -373,8 +373,8 @@ export async function getSubsidioHistorial(options: {
   search?: string;
   sortBy?: 'cliente' | 'subsidio' | 'fechaCambio' | 'tipoCambio';
   sortDirection?: 'asc' | 'desc';
+  esActivo?: 'activo' | 'inactivo';
 }) {
-  const skip = (options.page - 1) * options.limit;
   const sortDirection = options.sortDirection || 'desc';
 
   const where: any = {};
@@ -419,35 +419,84 @@ export async function getSubsidioHistorial(options: {
       break;
   }
 
-  const [historial, total] = await Promise.all([
-    prisma.subsidio_historial.findMany({
-      where,
-      orderBy,
-      skip,
-      take: options.limit,
-      include: {
-        cliente: {
-          select: {
-            id: true,
-            numero_cliente: true,
-            primer_nombre: true,
-            primer_apellido: true,
-          },
-        },
-        subsidio: {
-          select: {
-            id: true,
-            porcentaje: true,
-            limite_m3: true,
-          },
+  // Fetch all historial entries that match the base filters
+  // We need to compute esActivo for each, which requires knowing the latest entry per client+subsidio pair
+  const allHistorial = await prisma.subsidio_historial.findMany({
+    where,
+    orderBy,
+    include: {
+      cliente: {
+        select: {
+          id: true,
+          numero_cliente: true,
+          primer_nombre: true,
+          primer_apellido: true,
         },
       },
-    }),
-    prisma.subsidio_historial.count({ where }),
-  ]);
+      subsidio: {
+        select: {
+          id: true,
+          porcentaje: true,
+          limite_m3: true,
+        },
+      },
+    },
+  });
+
+  // Build latestEntryMap in memory from the fetched data (O(n) instead of O(n) queries)
+  // We need entries sorted by fecha_cambio desc, fecha_creacion desc for this to work
+  // First, fetch ALL entries (without filters) to correctly determine latest per pair
+  const allEntriesForLatest = await prisma.subsidio_historial.findMany({
+    orderBy: [{ fecha_cambio: 'desc' }, { fecha_creacion: 'desc' }],
+    select: { id: true, cliente_id: true, subsidio_id: true, tipo_cambio: true },
+  });
+
+  // Build the map: first occurrence for each pair is the latest (due to ordering)
+  const latestEntryMap = new Map<string, { id: bigint; tipoCambio: string }>();
+  for (const entry of allEntriesForLatest) {
+    if (entry.cliente_id && entry.subsidio_id) {
+      const key = `${entry.cliente_id.toString()}-${entry.subsidio_id}`;
+      if (!latestEntryMap.has(key)) {
+        latestEntryMap.set(key, { id: entry.id, tipoCambio: entry.tipo_cambio });
+      }
+    }
+  }
+
+  // Transform and add esActivo field
+  // An entry is "activo" only if:
+  // 1. It's the latest entry for that client+subsidio combination
+  // 2. AND it's an "agregado" or "alta" type (not "eliminado"/"baja")
+  let transformedHistorial = allHistorial.map((h) => {
+    const pairKey = h.cliente_id && h.subsidio_id ? `${h.cliente_id.toString()}-${h.subsidio_id}` : null;
+    const latestEntry = pairKey ? latestEntryMap.get(pairKey) : null;
+    
+    // This entry is active only if it's the latest AND it's an alta/agregado type
+    const isLatestEntry = latestEntry && latestEntry.id === h.id;
+    const isActiveType = h.tipo_cambio === 'agregado' || h.tipo_cambio === 'alta';
+    const esActivo = isLatestEntry && isActiveType;
+    
+    return {
+      ...transformHistorial(h),
+      esActivo,
+    };
+  });
+
+  // Apply esActivo filter if specified
+  if (options.esActivo === 'activo') {
+    transformedHistorial = transformedHistorial.filter((h) => h.esActivo);
+  } else if (options.esActivo === 'inactivo') {
+    transformedHistorial = transformedHistorial.filter((h) => !h.esActivo);
+  }
+
+  // Calculate total after esActivo filter
+  const total = transformedHistorial.length;
+
+  // Apply pagination
+  const skip = (options.page - 1) * options.limit;
+  const paginatedHistorial = transformedHistorial.slice(skip, skip + options.limit);
 
   return {
-    historial: historial.map(transformHistorial),
+    historial: paginatedHistorial,
     pagination: {
       total,
       page: options.page,

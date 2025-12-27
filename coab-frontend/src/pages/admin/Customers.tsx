@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { Input } from '@/components/ui/input';
 import { formatearRUT } from '@coab/utils';
@@ -30,9 +30,6 @@ interface CustomerFilters extends Record<string, unknown> {
 
 export default function CustomersPage() {
   const navigate = useNavigate();
-  
-  // Local search input state (for debouncing)
-  const [searchQuery, setSearchQuery] = useState('');
 
   // Check admin auth
   useEffect(() => {
@@ -42,7 +39,7 @@ export default function CustomersPage() {
     }
   }, [navigate]);
 
-  // Use the admin table hook
+  // Use the admin table hook with built-in debouncing for search
   const {
     data: customers,
     error,
@@ -55,18 +52,10 @@ export default function CustomersPage() {
     dataKey: 'data', // Clientes endpoint uses 'data' key
     defaultSort: { column: 'nombre', direction: 'asc' },
     defaultFilters: { q: '' },
+    debouncedFilterKeys: ['q'], // Debounce search input
+    debounceMs: 300,
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
-
-  // Debounce search query (300ms)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (searchQuery.length >= 2 || searchQuery.length === 0) {
-        setFilter('q', searchQuery);
-      }
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [searchQuery, setFilter]);
 
   const columns = [
     {
@@ -128,12 +117,12 @@ export default function CustomersPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             placeholder="Buscar por RUT, nombre, dirección o N° cliente..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={filters.q as string}
+            onChange={(e) => setFilter('q', e.target.value)}
             className="pl-9"
           />
         </div>
-        {searchQuery.length > 0 && searchQuery.length < 2 && (
+        {filters.q && (filters.q as string).length > 0 && (filters.q as string).length < 2 && (
           <p className="text-sm text-slate-500 mt-2">
             Ingrese al menos 2 caracteres para filtrar
           </p>

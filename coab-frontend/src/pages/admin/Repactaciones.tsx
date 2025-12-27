@@ -112,6 +112,7 @@ export default function AdminRepactacionesPage() {
     dataKey: 'repactaciones',
     defaultSort: { column: 'fechaInicio', direction: 'desc' },
     defaultFilters: { estado: '' },
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   const [activeTab, setActiveTab] = useState('repactaciones');

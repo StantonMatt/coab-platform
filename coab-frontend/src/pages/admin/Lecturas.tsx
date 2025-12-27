@@ -102,7 +102,7 @@ export default function LecturasPage() {
   const canEdit = useCanAccess('lecturas', 'edit_before_boleta');
   const canCorrect = useCanAccess('lecturas', 'create_correction');
 
-  // Use the admin table hook for data management
+  // Use the admin table hook for data management with debounced search
   const {
     data: lecturas,
     tableProps,
@@ -118,6 +118,9 @@ export default function LecturasPage() {
     metadataEndpoint: '/admin/lecturas/periodos-light',
     metadataKey: 'periodos',
     waitForMetadata: true,
+    debouncedFilterKeys: ['search'], // Debounce search input
+    debounceMs: 300,
+    dataStaleTime: 30000, // Cache for 30 seconds
     onMetadataLoaded: (periodos) => {
       if (periodos && periodos.length > 0) {
         return {

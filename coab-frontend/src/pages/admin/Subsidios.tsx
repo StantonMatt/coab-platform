@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { Percent, Plus, Pencil, Trash2, Check, Search, UserPlus, UserMinus, X } from 'lucide-react';
 import { formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,6 @@ import {
   DeleteConfirmDialog,
   PermissionGate,
   SortableHeader,
-  useSortState,
   useCanAccess,
   useAdminTable,
 } from '@/components/admin';
@@ -57,6 +56,7 @@ interface HistorialEntry {
   fechaCambio: string | null;
   tipoCambio: string;
   detalles: string | null;
+  esActivo: boolean;
   cliente: {
     id: string;
     numeroCliente: string;
@@ -69,14 +69,10 @@ interface HistorialEntry {
   } | null;
 }
 
-interface HistorialResponse {
-  historial: HistorialEntry[];
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
+interface HistorialFilters extends Record<string, unknown> {
+  search: string;
+  tipoCambio: string;
+  esActivo: string;
 }
 
 interface SubsidioFormData {
@@ -103,7 +99,6 @@ const initialFormData: SubsidioFormData = {
 
 export default function SubsidiosPage() {
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const canEdit = useCanAccess('subsidios', 'edit');
   const canDelete = useCanAccess('subsidios', 'delete');
 
@@ -117,12 +112,10 @@ export default function SubsidiosPage() {
     queryKey: 'admin-subsidios',
     dataKey: 'subsidios',
     defaultSort: { column: 'porcentaje', direction: 'desc' },
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   const [activeTab, setActiveTab] = useState('tipos');
-  const [historialPage, setHistorialPage] = useState(1);
-  const [historialSearch, setHistorialSearch] = useState('');
-  const [historialFilter, setHistorialFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingSubsidio, setEditingSubsidio] = useState<Subsidio | null>(null);
   const [deleteSubsidio, setDeleteSubsidio] = useState<Subsidio | null>(null);
@@ -130,15 +123,23 @@ export default function SubsidiosPage() {
   const [selectedSubsidio, setSelectedSubsidio] = useState<Subsidio | null>(null);
   const [selectedHistorial, setSelectedHistorial] = useState<HistorialEntry | null>(null);
 
-  // Use the sort hook for historial (keeping separate as it has different state)
+  // Use the admin table hook for historial (second tab)
   const {
-    sortBy: historialSortBy,
-    sortDirection: historialSortDirection,
-    handleSort: handleHistorialSort,
-  } = useSortState({
-    defaultColumn: 'fechaCambio',
-    defaultDirection: 'desc',
-    onSortChange: () => setHistorialPage(1),
+    data: historialEntries,
+    tableProps: historialTableProps,
+    filters: historialFilters,
+    setFilter: setHistorialFilter,
+    refetch: refetchHistorial,
+  } = useAdminTable<HistorialEntry, HistorialFilters>({
+    endpoint: '/admin/subsidio-historial',
+    queryKey: 'admin-subsidio-historial',
+    dataKey: 'historial',
+    defaultSort: { column: 'fechaCambio', direction: 'desc' },
+    defaultFilters: { search: '', tipoCambio: '', esActivo: '' },
+    enabled: activeTab === 'clientes',
+    debouncedFilterKeys: ['search'], // Debounce search input
+    debounceMs: 300,
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   // Assign modal state
@@ -191,24 +192,7 @@ export default function SubsidiosPage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // Subsidios data now managed by useAdminTable hook above
-
-  // Fetch historial (client assignments)
-  const { data: historialData, isLoading: loadingHistorial } = useQuery<HistorialResponse>({
-    queryKey: ['admin-subsidio-historial', historialPage, historialSearch, historialFilter, historialSortBy, historialSortDirection],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.append('page', historialPage.toString());
-      params.append('limit', '20');
-      if (historialSearch) params.append('search', historialSearch);
-      if (historialFilter) params.append('tipoCambio', historialFilter);
-      if (historialSortBy) params.append('sortBy', historialSortBy);
-      params.append('sortDirection', historialSortDirection);
-      const res = await adminApiClient.get<HistorialResponse>(`/admin/subsidio-historial?${params}`);
-      return res.data;
-    },
-    enabled: activeTab === 'clientes',
-  });
+  // Both subsidios and historial data now managed by useAdminTable hooks above
 
   // Fetch active subsidios for the assign dropdown
   const { data: activeSubsidios } = useQuery<Subsidio[]>({
@@ -321,7 +305,7 @@ export default function SubsidiosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Subsidio asignado', description: 'El cliente fue asignado al subsidio' });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidio-historial'] });
+      refetchHistorial();
       refetchSubsidios();
       setShowAssign(false);
       setAssignClienteId('');
@@ -349,10 +333,10 @@ export default function SubsidiosPage() {
           setShowReassign(true);
         }
       } else {
-        toast({
-          variant: 'destructive',
-          title: 'Error',
-          description: error.response?.data?.error?.message || 'Error al asignar subsidio',
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'Error al asignar subsidio',
         });
       }
     },
@@ -378,7 +362,7 @@ export default function SubsidiosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Subsidio reasignado', description: 'El cliente fue reasignado correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidio-historial'] });
+      refetchHistorial();
       refetchSubsidios();
       setShowReassign(false);
       setReassignClienteInfo(null);
@@ -422,7 +406,7 @@ export default function SubsidiosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Subsidio removido', description: 'El cliente fue removido del subsidio' });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidio-historial'] });
+      refetchHistorial();
       refetchSubsidios();
       setShowRemove(false);
       setRemoveEntry(null);
@@ -460,7 +444,7 @@ export default function SubsidiosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Registro actualizado', description: 'El registro fue modificado correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidio-historial'] });
+      refetchHistorial();
       setShowEditHistorial(false);
       setEditHistorialEntry(null);
       setSelectedHistorial(null);
@@ -482,7 +466,7 @@ export default function SubsidiosPage() {
     },
     onSuccess: () => {
       toast({ title: 'Registro eliminado', description: 'El registro fue eliminado correctamente' });
-      queryClient.invalidateQueries({ queryKey: ['admin-subsidio-historial'] });
+      refetchHistorial();
       refetchSubsidios();
       setShowDeleteHistorial(false);
       setDeleteHistorialEntry(null);
@@ -640,9 +624,9 @@ export default function SubsidiosPage() {
         <SortableHeader
           column="cliente"
           label="N° Cliente"
-          sortBy={historialSortBy}
-          sortDirection={historialSortDirection}
-          onSort={handleHistorialSort}
+          sortBy={historialTableProps.sorting.sortBy}
+          sortDirection={historialTableProps.sorting.sortDirection}
+          onSort={historialTableProps.sorting.onSort}
         />
       ),
       render: (entry: HistorialEntry) => (
@@ -662,9 +646,9 @@ export default function SubsidiosPage() {
         <SortableHeader
           column="subsidio"
           label="Subsidio"
-          sortBy={historialSortBy}
-          sortDirection={historialSortDirection}
-          onSort={handleHistorialSort}
+          sortBy={historialTableProps.sorting.sortBy}
+          sortDirection={historialTableProps.sorting.sortDirection}
+          onSort={historialTableProps.sorting.onSort}
         />
       ),
       render: (entry: HistorialEntry) =>
@@ -690,14 +674,27 @@ export default function SubsidiosPage() {
       ),
     },
     {
+      key: 'esActivo',
+      header: 'Estado Actual',
+      render: (entry: HistorialEntry) => (
+        <StatusBadge
+          status={entry.esActivo ? 'activo' : 'inactivo'}
+          statusMap={{
+            activo: { label: 'Activo', className: 'bg-blue-100 text-blue-700' },
+            inactivo: { label: 'Inactivo', className: 'bg-slate-100 text-slate-600' },
+          }}
+        />
+      ),
+    },
+    {
       key: 'fechaCambio',
       header: (
         <SortableHeader
           column="fechaCambio"
           label="Fecha"
-          sortBy={historialSortBy}
-          sortDirection={historialSortDirection}
-          onSort={handleHistorialSort}
+          sortBy={historialTableProps.sorting.sortBy}
+          sortDirection={historialTableProps.sorting.sortDirection}
+          onSort={historialTableProps.sorting.onSort}
         />
       ),
       className: 'hidden sm:table-cell',
@@ -757,20 +754,14 @@ export default function SubsidiosPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input
                 placeholder="Buscar por cliente..."
-                value={historialSearch}
-                onChange={(e) => {
-                  setHistorialSearch(e.target.value);
-                  setHistorialPage(1);
-                }}
+                value={historialFilters.search}
+                onChange={(e) => setHistorialFilter('search', e.target.value)}
                 className="pl-9"
               />
             </div>
             <Select
-              value={historialFilter || 'all'}
-              onValueChange={(val) => {
-                setHistorialFilter(val === 'all' ? '' : val);
-                setHistorialPage(1);
-              }}
+              value={historialFilters.tipoCambio || 'all'}
+              onValueChange={(val) => setHistorialFilter('tipoCambio', val === 'all' ? '' : val)}
             >
               <SelectTrigger className="w-full sm:w-40">
                 <SelectValue placeholder="Tipo" />
@@ -781,29 +772,29 @@ export default function SubsidiosPage() {
                 <SelectItem value="eliminado">Eliminados</SelectItem>
               </SelectContent>
             </Select>
+            <Select
+              value={historialFilters.esActivo || 'all'}
+              onValueChange={(val) => setHistorialFilter('esActivo', val === 'all' ? '' : val)}
+            >
+              <SelectTrigger className="w-full sm:w-40">
+                <SelectValue placeholder="Estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos Estados</SelectItem>
+                <SelectItem value="activo">Solo Activos</SelectItem>
+                <SelectItem value="inactivo">Solo Inactivos</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <DataTable
             columns={historialColumns}
-            data={historialData?.historial || []}
+            data={historialEntries}
             keyExtractor={(entry) => entry.id}
-            isLoading={loadingHistorial}
             emptyMessage="No hay registros de subsidios"
             emptyIcon={<Percent className="h-12 w-12 text-slate-300" />}
             onRowClick={(entry) => setSelectedHistorial(entry)}
-            pagination={
-              historialData?.pagination && {
-                page: historialData.pagination.page,
-                totalPages: historialData.pagination.totalPages,
-                total: historialData.pagination.total,
-                onPageChange: setHistorialPage,
-              }
-            }
-            sorting={{
-              sortBy: historialSortBy,
-              sortDirection: historialSortDirection,
-              onSort: handleHistorialSort,
-            }}
+            {...historialTableProps}
           />
         </TabsContent>
       </Tabs>
@@ -956,19 +947,19 @@ export default function SubsidiosPage() {
                     <p className="text-sm text-amber-800 mb-2">
                       <strong>Dar de Baja:</strong> Crea un nuevo registro indicando que el cliente dejó de recibir este subsidio.
                     </p>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setRemoveEntry(selectedHistorial);
-                        setShowRemove(true);
-                      }}
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setRemoveEntry(selectedHistorial);
+                      setShowRemove(true);
+                    }}
                       className="text-amber-700 border-amber-300 hover:bg-amber-100"
-                    >
-                      <UserMinus className="h-4 w-4 mr-2" />
-                      Dar de Baja
-                    </Button>
-                  </div>
-                )}
+                  >
+                    <UserMinus className="h-4 w-4 mr-2" />
+                    Dar de Baja
+                  </Button>
+                </div>
+              )}
 
                 {/* Edit and Delete - for correcting mistakes */}
                 {(canEdit || canDelete) && (
@@ -1193,7 +1184,7 @@ export default function SubsidiosPage() {
                 // Search input with dropdown
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <Input
+              <Input
                     value={clienteSearch}
                     onChange={(e) => {
                       setClienteSearch(e.target.value);
@@ -1210,7 +1201,7 @@ export default function SubsidiosPage() {
                       {searchingClientes ? (
                         <div className="p-3 text-center text-slate-500 text-sm">
                           Buscando...
-                        </div>
+            </div>
                       ) : clienteResults?.data && clienteResults.data.length > 0 ? (
                         clienteResults.data.map((cliente) => (
                           <button
@@ -1328,15 +1319,15 @@ export default function SubsidiosPage() {
 
             {/* Motivo */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Motivo (opcional)
-              </label>
-              <Textarea
-                value={removeMotivo}
-                onChange={(e) => setRemoveMotivo(e.target.value)}
-                placeholder="Ingrese el motivo de la baja"
-                rows={3}
-              />
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Motivo (opcional)
+            </label>
+            <Textarea
+              value={removeMotivo}
+              onChange={(e) => setRemoveMotivo(e.target.value)}
+              placeholder="Ingrese el motivo de la baja"
+              rows={3}
+            />
             </div>
           </div>
           <DialogFooter>
@@ -1352,13 +1343,13 @@ export default function SubsidiosPage() {
                   const lastDay = new Date(year, month, 0).getDate();
                   const fechaCambio = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
                   
-                  removeMutation.mutate({
-                    clienteId: removeEntry.clienteId,
-                    subsidioId: removeEntry.subsidio.id,
-                    motivo: removeMotivo,
+                removeMutation.mutate({
+                  clienteId: removeEntry.clienteId,
+                  subsidioId: removeEntry.subsidio.id,
+                  motivo: removeMotivo,
                     fechaCambio,
                   });
-                }
+              }
               }}
               disabled={removeMutation.isPending || !removeMonth}
             >

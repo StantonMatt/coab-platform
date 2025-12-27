@@ -88,6 +88,7 @@ export default function TarifasPage() {
     queryKey: 'admin-tarifas',
     dataKey: 'tarifas',
     defaultSort: { column: 'fechaInicio', direction: 'desc' },
+    dataStaleTime: 30000, // Cache for 30 seconds
   });
 
   const [showForm, setShowForm] = useState(false);
