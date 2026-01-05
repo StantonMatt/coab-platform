@@ -57,12 +57,15 @@ export async function searchCustomers(
   }
 
   // Build orderBy based on sortBy parameter
-  // Note: 'saldo' sorting is handled specially below with raw SQL
+  // Note: 'saldo' and 'rut' sorting are handled specially below with raw SQL
   let orderBy: any;
   let useSaldoSort = false;
+  let useRutSort = false;
   switch (sortBy) {
     case 'rut':
-      orderBy = { rut: sortDirection };
+      // Will be handled with raw SQL for proper numeric sorting
+      useRutSort = true;
+      orderBy = { id: 'asc' }; // Default, will be overridden
       break;
     case 'numeroCliente':
       orderBy = { numero_cliente: sortDirection };
@@ -80,22 +83,33 @@ export async function searchCustomers(
 
   // Sanitize query for SQL use (defined here so it's available for raw SQL)
   const sanitizedQueryForSql = query ? query.replace(/'/g, "''").trim() : '';
+  const sortDir = sortDirection === 'asc' ? 'ASC' : 'DESC';
+  const searchCondition = sanitizedQueryForSql
+    ? `AND (
+        c.rut ILIKE '%${sanitizedQueryForSql}%' OR
+        c.numero_cliente ILIKE '%${sanitizedQueryForSql}%' OR
+        c.primer_nombre ILIKE '%${sanitizedQueryForSql}%' OR
+        c.primer_apellido ILIKE '%${sanitizedQueryForSql}%' OR
+        c.segundo_apellido ILIKE '%${sanitizedQueryForSql}%'
+      )`
+    : '';
+
+  // For RUT sorting, we need to extract numeric part and sort numerically
+  // RUT format: XX.XXX.XXX-X - we extract everything before the dash and remove dots
+  let customerIds: bigint[] | null = null;
+  if (useRutSort) {
+    const sortedIds = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`
+      SELECT c.id
+      FROM clientes c
+      WHERE c.es_cliente_actual = true ${searchCondition}
+      ORDER BY CAST(REGEXP_REPLACE(SPLIT_PART(c.rut, '-', 1), '[^0-9]', '', 'g') AS BIGINT) ${sortDir}, c.id ASC
+      LIMIT ${limit} OFFSET ${skip}
+    `);
+    customerIds = sortedIds.map((r) => r.id);
+  }
 
   // For saldo sorting, we need to use raw SQL to sort by pending boletas count
-  let customerIds: bigint[] | null = null;
   if (useSaldoSort) {
-    // Get sorted customer IDs using raw SQL with pending boletas count
-    const sortDir = sortDirection === 'asc' ? 'ASC' : 'DESC';
-    const searchCondition = sanitizedQueryForSql
-      ? `AND (
-          c.rut ILIKE '%${sanitizedQueryForSql}%' OR
-          c.numero_cliente ILIKE '%${sanitizedQueryForSql}%' OR
-          c.primer_nombre ILIKE '%${sanitizedQueryForSql}%' OR
-          c.primer_apellido ILIKE '%${sanitizedQueryForSql}%' OR
-          c.segundo_apellido ILIKE '%${sanitizedQueryForSql}%'
-        )`
-      : '';
-    
     const sortedIds = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`
       SELECT c.id
       FROM clientes c
