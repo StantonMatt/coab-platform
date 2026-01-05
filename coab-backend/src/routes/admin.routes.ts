@@ -2953,7 +2953,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
         limit: z.coerce.number().default(50),
         estado: z.string().optional(),
         search: z.string().optional(),
-        sortBy: z.enum(['cliente', 'fechaCorte', 'estado', 'fechaReposicion']).optional().default('fechaCorte'),
+        sortBy: z.enum(['numeroCliente', 'fechaCorte', 'estado', 'fechaReposicion']).optional().default('fechaCorte'),
         sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
       }).parse(request.query);
       return await cortesService.getAllCortes(query.page, query.limit, query.estado, query.search, query.sortBy, query.sortDirection);
@@ -2995,7 +2995,13 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post('/cortes', { preHandler: requirePermission('cortes_servicio', 'create') }, async (request, reply) => {
     try {
-      const data = z.object({ clienteId: z.string().regex(/^\d+$/), fechaCorte: z.string().optional(), motivoCorte: z.string().min(1), observaciones: z.string().optional() }).parse(request.body);
+      const data = z.object({ 
+        numeroCliente: z.string().regex(/^\d+$/), 
+        fechaCorte: z.string().optional(), 
+        motivoCorte: z.string().min(1), 
+        observaciones: z.string().optional(),
+        montoCobrado: z.number().optional(),
+      }).parse(request.body);
       return reply.code(201).send(await cortesService.createCorte(data, request.user!.email!));
     } catch (error: any) {
       if (error instanceof ZodError) return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
@@ -3012,6 +3018,45 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
       if (error.message?.includes('ya fue')) return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });
       return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  // Get reposicion info for a client (tarifa values and previous reposicion count)
+  fastify.get('/cortes/cliente/:clienteId/reposicion-info', async (request, reply) => {
+    try {
+      const { clienteId } = z.object({ clienteId: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await cortesService.getClienteReposicionInfo(BigInt(clienteId));
+    } catch (error: any) {
+      fastify.log.error(error);
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al obtener información' } });
+    }
+  });
+
+  fastify.patch('/cortes/:id', { preHandler: requirePermission('cortes_servicio', 'edit') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      const data = z.object({
+        fechaCorte: z.string().optional(),
+        motivoCorte: z.string().optional(),
+        observaciones: z.string().optional(),
+        montoCobrado: z.number().optional(),
+      }).parse(request.body);
+      return await cortesService.updateCorte(BigInt(id), data, request.user!.email!);
+    } catch (error: any) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } });
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al actualizar corte' } });
+    }
+  });
+
+  fastify.delete('/cortes/:id', { preHandler: requirePermission('cortes_servicio', 'delete') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await cortesService.deleteCorte(BigInt(id), request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrado')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      fastify.log.error(error);
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al eliminar corte' } });
     }
   });
 

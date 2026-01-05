@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { Scissors, Plus, Search, RefreshCcw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Scissors, Plus, Search, RefreshCcw, Pencil, Trash2, Info } from 'lucide-react';
 import { formatearPesos, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -61,19 +61,21 @@ interface CorteFilters extends Record<string, unknown> {
 }
 
 interface CorteFormData {
-  clienteId: string;
+  numeroCliente: string;
   fechaCorte: string;
   motivoCorte: string;
   observaciones: string;
-  montoCobrado: string;
+  usarMontoPersonalizado: boolean;
+  montoPersonalizado: string;
 }
 
 const emptyForm: CorteFormData = {
-  clienteId: '',
+  numeroCliente: '',
   fechaCorte: new Date().toISOString().split('T')[0],
   motivoCorte: 'No pago',
   observaciones: '',
-  montoCobrado: '',
+  usarMontoPersonalizado: false,
+  montoPersonalizado: '',
 };
 
 const ESTADO_MAP: Record<string, { label: string; className: string }> = {
@@ -82,9 +84,148 @@ const ESTADO_MAP: Record<string, { label: string; className: string }> = {
   pendiente: { label: 'Pendiente', className: 'bg-amber-100 text-amber-700' },
 };
 
+// Edit Form Component
+function EditCorteForm({
+  corte,
+  onSave,
+  onCancel,
+  isLoading,
+}: {
+  corte: CorteServicio;
+  onSave: (data: Record<string, unknown>) => void;
+  onCancel: () => void;
+  isLoading: boolean;
+}) {
+  const [fechaCorte, setFechaCorte] = useState(
+    corte.fechaCorte ? corte.fechaCorte.split('T')[0] : ''
+  );
+  const [motivoCorte, setMotivoCorte] = useState(corte.motivoCorte || 'No pago');
+  const [observaciones, setObservaciones] = useState(corte.observaciones || '');
+  const [usarMontoPersonalizado, setUsarMontoPersonalizado] = useState(!!corte.montoCobrado);
+  const [montoPersonalizado, setMontoPersonalizado] = useState(
+    corte.montoCobrado ? String(corte.montoCobrado) : ''
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const data: Record<string, unknown> = {
+      fechaCorte,
+      motivoCorte,
+      observaciones: observaciones || null,
+    };
+    // Only include montoCobrado if using custom amount
+    if (usarMontoPersonalizado && montoPersonalizado) {
+      data.montoCobrado = parseFloat(montoPersonalizado);
+    } else if (!usarMontoPersonalizado && corte.montoCobrado) {
+      // Clear the custom amount if switching back to tarifa
+      data.montoCobrado = null;
+    }
+    onSave(data);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="p-3 bg-slate-50 rounded-lg text-sm">
+        <div className="grid grid-cols-2 gap-2">
+          <span className="text-slate-500">Cliente:</span>
+          <span className="font-medium">{corte.cliente?.nombre || corte.numeroCliente}</span>
+          <span className="text-slate-500">Estado:</span>
+          <span className="font-medium capitalize">{corte.estado}</span>
+        </div>
+      </div>
+
+      <div>
+        <Label>Fecha de Corte *</Label>
+        <Input
+          type="date"
+          value={fechaCorte}
+          onChange={(e) => setFechaCorte(e.target.value)}
+          required
+        />
+      </div>
+
+      <div>
+        <Label>Motivo *</Label>
+        <Select value={motivoCorte} onValueChange={setMotivoCorte}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="No pago">No pago</SelectItem>
+            <SelectItem value="Fraude">Fraude</SelectItem>
+            <SelectItem value="Solicitud cliente">Solicitud del cliente</SelectItem>
+            <SelectItem value="Mantención">Mantención</SelectItem>
+            <SelectItem value="Otro">Otro</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Custom amount option */}
+      <div className="p-3 bg-slate-100 border border-slate-200 rounded-lg">
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="editUsarMontoPersonalizado"
+            checked={usarMontoPersonalizado}
+            onChange={(e) => setUsarMontoPersonalizado(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+          />
+          <label htmlFor="editUsarMontoPersonalizado" className="text-sm text-slate-700">
+            Usar monto personalizado (en lugar de tarifa)
+          </label>
+        </div>
+        
+        {usarMontoPersonalizado && (
+          <div className="mt-2">
+            <Input
+              type="number"
+              value={montoPersonalizado}
+              onChange={(e) => setMontoPersonalizado(e.target.value)}
+              placeholder="Monto personalizado"
+            />
+          </div>
+        )}
+      </div>
+
+      <div>
+        <Label>Observaciones</Label>
+        <Textarea
+          value={observaciones}
+          onChange={(e) => setObservaciones(e.target.value)}
+          placeholder="Observaciones opcionales"
+          rows={2}
+        />
+      </div>
+
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancelar
+        </Button>
+        <Button type="submit" className="bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
+          {isLoading ? 'Guardando...' : 'Guardar Cambios'}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
+}
+
 export default function AdminCortesPage() {
   const { toast } = useToast();
   const canReposicion = useCanAccess('cortes_servicio', 'authorize_reposicion');
+  const canEdit = useCanAccess('cortes_servicio', 'edit');
+  const canDelete = useCanAccess('cortes_servicio', 'delete');
+
+  // Fetch current tarifa for reposicion values
+  const { data: tarifaVigente } = useQuery({
+    queryKey: ['tarifa-vigente'],
+    queryFn: async () => {
+      const res = await adminApiClient.get('/admin/tarifas/vigente');
+      return res.data as {
+        costoReposicion1: number;
+        costoReposicion2: number;
+      };
+    },
+  });
 
   // Use the admin table hook
   const {
@@ -113,14 +254,38 @@ export default function AdminCortesPage() {
   // Reposicion state
   const [reposingCorte, setReposingCorte] = useState<CorteServicio | null>(null);
 
+  // Fetch reposicion info when a corte is selected for reposicion
+  const { data: reposicionInfo } = useQuery({
+    queryKey: ['reposicion-info', reposingCorte?.clienteId],
+    queryFn: async () => {
+      if (!reposingCorte?.clienteId) return null;
+      const res = await adminApiClient.get(`/admin/cortes/cliente/${reposingCorte.clienteId}/reposicion-info`);
+      return res.data as {
+        reposicionesPrevias: number;
+        siguienteNumeroReposicion: number;
+        tarifaReposicion1: number;
+        tarifaReposicion2: number;
+      };
+    },
+    enabled: !!reposingCorte?.clienteId,
+  });
+
+  // Edit and delete states
+  const [editingCorte, setEditingCorte] = useState<CorteServicio | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const createMutation = useMutation({
     mutationFn: async (data: CorteFormData) => {
       return adminApiClient.post('/admin/cortes', {
-        clienteId: data.clienteId,
+        numeroCliente: data.numeroCliente,
         fechaCorte: data.fechaCorte,
         motivoCorte: data.motivoCorte,
-        observaciones: data.observaciones || null,
-        montoCobrado: data.montoCobrado ? parseFloat(data.montoCobrado) : null,
+        observaciones: data.observaciones || undefined,
+        // Only send montoCobrado if using custom amount
+        montoCobrado: data.usarMontoPersonalizado && data.montoPersonalizado
+          ? parseFloat(data.montoPersonalizado)
+          : undefined,
       });
     },
     onSuccess: () => {
@@ -156,6 +321,43 @@ export default function AdminCortesPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Record<string, unknown> }) => {
+      return adminApiClient.patch(`/admin/cortes/${id}`, data);
+    },
+    onSuccess: () => {
+      toast({ title: 'Corte actualizado', description: 'Los cambios se guardaron correctamente.' });
+      refetch();
+      setEditingCorte(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'No se pudo actualizar el corte.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return adminApiClient.delete(`/admin/cortes/${id}`);
+    },
+    onSuccess: () => {
+      toast({ title: 'Corte eliminado', description: 'El registro ha sido eliminado.' });
+      refetch();
+      setDeleteConfirmOpen(false);
+      setDeletingId(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'No se pudo eliminar el corte.',
+        variant: 'destructive',
+      });
+    },
+  });
+
   const closeModal = () => {
     setIsModalOpen(false);
     setFormData(emptyForm);
@@ -168,14 +370,14 @@ export default function AdminCortesPage() {
 
   const columns = [
     {
-      key: 'cliente',
-      header: <SortableHeader column="cliente" label="Cliente" />,
+      key: 'numeroCliente',
+      header: <SortableHeader column="numeroCliente" label="Cliente" />,
       render: (c: CorteServicio) => (
         <div>
-          <p className="font-medium text-slate-900">
-            {c.cliente?.nombre || `Cliente #${c.clienteId}`}
+          <p className="font-semibold text-lg text-slate-900">{c.numeroCliente}</p>
+          <p className="text-xs text-slate-500">
+            {c.cliente?.nombre || '-'}
           </p>
-          <p className="text-xs text-slate-500">{c.numeroCliente}</p>
         </div>
       ),
     },
@@ -327,18 +529,61 @@ export default function AdminCortesPage() {
                 )}
               </div>
 
-              {/* Actions */}
+              {/* Reponer Servicio - only for cortado status */}
               {selectedCorte.estado === 'cortado' && canReposicion && (
-                <div className="pt-4 border-t border-slate-200">
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <p className="text-sm text-emerald-800 mb-3">
+                    <strong>Reponer Servicio:</strong> Marca el servicio como repuesto 
+                    cuando se ha restablecido el suministro al cliente.
+                  </p>
                   <Button
                     onClick={() => setReposingCorte(selectedCorte)}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                    size="sm"
                   >
                     <RefreshCcw className="h-4 w-4 mr-2" />
                     Reponer Servicio
                   </Button>
                 </div>
               )}
+
+              {/* Corregir registro */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                <p className="text-sm text-slate-600 mb-3">
+                  <strong>Corregir registro:</strong> Modifica o elimina este registro 
+                  específico (para corregir errores de entrada).
+                </p>
+                <div className="flex gap-2">
+                  {canEdit && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setEditingCorte(selectedCorte);
+                        setSelectedCorte(null);
+                      }}
+                    >
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Editar
+                    </Button>
+                  )}
+                  {canDelete && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-red-600 hover:text-red-700 border-red-200 hover:bg-red-50"
+                      onClick={() => {
+                        setDeletingId(selectedCorte.id);
+                        setDeleteConfirmOpen(true);
+                        setSelectedCorte(null);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Eliminar Registro
+                    </Button>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </DialogContent>
@@ -352,13 +597,13 @@ export default function AdminCortesPage() {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <Label>ID del Cliente *</Label>
+              <Label>Número de Cliente *</Label>
               <Input
                 type="text"
-                value={formData.clienteId}
-                onChange={(e) => setFormData({ ...formData, clienteId: e.target.value })}
+                value={formData.numeroCliente}
+                onChange={(e) => setFormData({ ...formData, numeroCliente: e.target.value })}
                 required
-                placeholder="Ingrese ID del cliente"
+                placeholder="Ej: 110710"
               />
             </div>
             <div>
@@ -388,14 +633,55 @@ export default function AdminCortesPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label>Monto Cobrado (opcional)</Label>
-              <Input
-                type="number"
-                value={formData.montoCobrado}
-                onChange={(e) => setFormData({ ...formData, montoCobrado: e.target.value })}
-                placeholder="0"
-              />
+            {/* Tarifa Info Box */}
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center gap-2 text-blue-800 mb-2">
+                <Info className="h-4 w-4" />
+                <span className="text-sm font-medium">Cargo por Reposición</span>
+              </div>
+              {tarifaVigente && (
+                <div className="grid grid-cols-2 gap-2 text-sm text-blue-700 mb-2">
+                  <span>1ª Reposición:</span>
+                  <span className="font-medium">{formatearPesos(tarifaVigente.costoReposicion1)}</span>
+                  <span>2ª+ Reposición:</span>
+                  <span className="font-medium">{formatearPesos(tarifaVigente.costoReposicion2)}</span>
+                </div>
+              )}
+              
+              {/* Toggle for custom amount */}
+              <div className="flex items-center gap-2 pt-2 border-t border-blue-200">
+                <input
+                  type="checkbox"
+                  id="usarMontoPersonalizado"
+                  checked={formData.usarMontoPersonalizado}
+                  onChange={(e) => setFormData({ ...formData, usarMontoPersonalizado: e.target.checked })}
+                  className="h-4 w-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="usarMontoPersonalizado" className="text-sm text-blue-700">
+                  Usar monto personalizado
+                </label>
+              </div>
+              
+              {formData.usarMontoPersonalizado && (
+                <div className="mt-2">
+                  <Input
+                    type="number"
+                    value={formData.montoPersonalizado}
+                    onChange={(e) => setFormData({ ...formData, montoPersonalizado: e.target.value })}
+                    placeholder="Monto personalizado"
+                    className="bg-white"
+                  />
+                  <p className="text-xs text-blue-600 mt-1">
+                    Este monto reemplazará el valor de tarifa para este corte.
+                  </p>
+                </div>
+              )}
+              
+              {!formData.usarMontoPersonalizado && (
+                <p className="text-xs text-blue-600 mt-2">
+                  El cargo se determina automáticamente al reponer según el historial del cliente.
+                </p>
+              )}
             </div>
             <div>
               <Label>Observaciones</Label>
@@ -421,16 +707,91 @@ export default function AdminCortesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Reposicion Confirmation */}
+      {/* Reposicion Confirmation with Tarifa Info */}
+      <Dialog open={!!reposingCorte} onOpenChange={(open) => !open && setReposingCorte(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>¿Confirmar reposición de servicio?</DialogTitle>
+          </DialogHeader>
+          {reposingCorte && (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-600">
+                Se repondrá el servicio para <strong>{reposingCorte.cliente?.nombre || reposingCorte.numeroCliente}</strong>.
+              </p>
+
+              {reposicionInfo && (
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
+                  <div className="flex items-center gap-2 text-blue-800">
+                    <Info className="h-4 w-4" />
+                    <span className="font-medium">Información de Cargo</span>
+                  </div>
+                  <div className="text-sm text-blue-700 space-y-1">
+                    <p>
+                      Reposiciones previas del cliente: <strong>{reposicionInfo.reposicionesPrevias}</strong>
+                    </p>
+                    <p>
+                      Se aplicará: <strong>Reposición {reposicionInfo.siguienteNumeroReposicion}</strong> - {' '}
+                      <strong className="text-blue-900">
+                        {formatearPesos(
+                          reposicionInfo.siguienteNumeroReposicion === 2
+                            ? reposicionInfo.tarifaReposicion2
+                            : reposicionInfo.tarifaReposicion1
+                        )}
+                      </strong>
+                    </p>
+                  </div>
+                  <div className="text-xs text-blue-600 pt-2 border-t border-blue-200">
+                    <p>Tarifa Reposición 1: {formatearPesos(reposicionInfo.tarifaReposicion1)}</p>
+                    <p>Tarifa Reposición 2: {formatearPesos(reposicionInfo.tarifaReposicion2)}</p>
+                  </div>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setReposingCorte(null)}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={() => reposingCorte && reposicionMutation.mutate(reposingCorte.id)}
+                  disabled={reposicionMutation.isPending}
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {reposicionMutation.isPending ? 'Procesando...' : 'Confirmar Reposición'}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
       <ConfirmDialog
-        open={!!reposingCorte}
-        onOpenChange={(open) => !open && setReposingCorte(null)}
-        title="¿Confirmar reposición de servicio?"
-        description={`Se repondrá el servicio para ${reposingCorte?.cliente?.nombre || reposingCorte?.numeroCliente || 'el cliente'}.`}
-        onConfirm={() => reposingCorte && reposicionMutation.mutate(reposingCorte.id)}
-        isLoading={reposicionMutation.isPending}
-        confirmText="Confirmar Reposición"
+        open={deleteConfirmOpen}
+        onOpenChange={setDeleteConfirmOpen}
+        title="¿Eliminar registro de corte?"
+        description="Esta acción eliminará permanentemente el registro. Use esto solo para corregir errores de entrada."
+        onConfirm={() => deletingId && deleteMutation.mutate(deletingId)}
+        isLoading={deleteMutation.isPending}
+        variant="destructive"
+        confirmText="Eliminar"
       />
+
+      {/* Edit Modal */}
+      <Dialog open={!!editingCorte} onOpenChange={() => setEditingCorte(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Corte de Servicio</DialogTitle>
+          </DialogHeader>
+          {editingCorte && (
+            <EditCorteForm
+              corte={editingCorte}
+              onSave={(data) => updateMutation.mutate({ id: editingCorte.id, data })}
+              onCancel={() => setEditingCorte(null)}
+              isLoading={updateMutation.isPending}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </AdminLayout>
   );
 }

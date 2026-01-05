@@ -32,7 +32,7 @@ export async function getAllCortes(
   limit: number = 50,
   estado?: string,
   search?: string,
-  sortBy: 'cliente' | 'fechaCorte' | 'estado' | 'fechaReposicion' = 'fechaCorte',
+  sortBy: 'numeroCliente' | 'fechaCorte' | 'estado' | 'fechaReposicion' = 'fechaCorte',
   sortDirection: 'asc' | 'desc' = 'desc'
 ) {
   const skip = (page - 1) * limit;
@@ -58,8 +58,8 @@ export async function getAllCortes(
   // Build orderBy based on sortBy parameter
   let orderBy: any;
   switch (sortBy) {
-    case 'cliente':
-      orderBy = { clientes: { primer_apellido: sortDirection } };
+    case 'numeroCliente':
+      orderBy = { numero_cliente: sortDirection };
       break;
     case 'estado':
       orderBy = { estado: sortDirection };
@@ -117,12 +117,13 @@ export async function getCortesByCliente(clienteId: bigint) {
 }
 
 export async function createCorte(data: any, adminEmail: string) {
-  const cliente = await prisma.clientes.findUnique({ where: { id: BigInt(data.clienteId) } });
+  // Look up client by numero_cliente
+  const cliente = await prisma.clientes.findFirst({ where: { numero_cliente: data.numeroCliente } });
   if (!cliente) throw new Error('Cliente no encontrado');
 
   const c = await prisma.cortes_servicio.create({
     data: {
-      cliente_id: BigInt(data.clienteId),
+      cliente_id: cliente.id,
       numero_cliente: cliente.numero_cliente,
       fecha_corte: data.fechaCorte ? new Date(data.fechaCorte) : new Date(),
       motivo_corte: data.motivoCorte,
@@ -142,7 +143,7 @@ export async function createCorte(data: any, adminEmail: string) {
       usuario_tipo: 'admin',
       usuario_email: adminEmail,
       datos_nuevos: {
-        clienteId: data.clienteId,
+        numeroCliente: data.numeroCliente,
         motivo: data.motivoCorte,
       },
     },
@@ -158,6 +159,7 @@ export async function updateCorte(id: bigint, data: any, adminEmail: string) {
   const c = await prisma.cortes_servicio.update({
     where: { id },
     data: {
+      ...(data.fechaCorte !== undefined && { fecha_corte: new Date(data.fechaCorte) }),
       ...(data.motivoCorte !== undefined && { motivo_corte: data.motivoCorte }),
       ...(data.observaciones !== undefined && { observaciones: data.observaciones }),
       ...(data.montoCobrado !== undefined && { monto_cobrado: data.montoCobrado }),
@@ -173,12 +175,47 @@ export async function updateCorte(id: bigint, data: any, adminEmail: string) {
       entidad_id: id,
       usuario_tipo: 'admin',
       usuario_email: adminEmail,
-      datos_anteriores: { motivo: existing.motivo_corte },
-      datos_nuevos: { motivo: c.motivo_corte },
+      datos_anteriores: { 
+        fechaCorte: existing.fecha_corte,
+        motivo: existing.motivo_corte,
+        montoCobrado: existing.monto_cobrado ? Number(existing.monto_cobrado) : null,
+      },
+      datos_nuevos: { 
+        fechaCorte: c.fecha_corte,
+        motivo: c.motivo_corte,
+        montoCobrado: c.monto_cobrado ? Number(c.monto_cobrado) : null,
+      },
     },
   });
 
   return transformCorte(c);
+}
+
+export async function deleteCorte(id: bigint, adminEmail: string) {
+  const existing = await prisma.cortes_servicio.findUnique({ where: { id } });
+  if (!existing) throw new Error('Corte no encontrado');
+
+  await prisma.cortes_servicio.delete({ where: { id } });
+
+  await prisma.log_auditoria.create({
+    data: {
+      accion: 'ELIMINAR_CORTE',
+      entidad: 'cortes_servicio',
+      entidad_id: id,
+      usuario_tipo: 'admin',
+      usuario_email: adminEmail,
+      datos_anteriores: {
+        clienteId: existing.cliente_id?.toString(),
+        numeroCliente: existing.numero_cliente,
+        fechaCorte: existing.fecha_corte,
+        motivo: existing.motivo_corte,
+        estado: existing.estado,
+      },
+      datos_nuevos: null,
+    },
+  });
+
+  return { success: true, message: 'Corte eliminado' };
 }
 
 export async function autorizarReposicion(id: bigint, adminEmail: string, numeroReposicion?: number) {
@@ -186,13 +223,28 @@ export async function autorizarReposicion(id: bigint, adminEmail: string, numero
   if (!c) throw new Error('Corte no encontrado');
   if (c.estado === 'repuesto') throw new Error('El servicio ya fue repuesto');
 
+  // If numeroReposicion not provided, calculate based on client's history
+  let reposicionNumber = numeroReposicion;
+  if (!reposicionNumber) {
+    // Count previous reposiciones for this client
+    const previousCount = await prisma.cortes_servicio.count({
+      where: {
+        cliente_id: c.cliente_id,
+        estado: 'repuesto',
+        id: { not: id }, // Exclude current record
+      },
+    });
+    // Reposicion 1 for first time, Reposicion 2 for subsequent
+    reposicionNumber = previousCount >= 1 ? 2 : 1;
+  }
+
   const updated = await prisma.cortes_servicio.update({
     where: { id },
     data: {
       estado: 'repuesto',
       fecha_reposicion: new Date(),
       autorizado_reposicion_por: adminEmail,
-      numero_reposicion: numeroReposicion || c.numero_reposicion,
+      numero_reposicion: reposicionNumber,
       updated_at: new Date(),
     },
     include: { clientes: true },
@@ -206,9 +258,37 @@ export async function autorizarReposicion(id: bigint, adminEmail: string, numero
       usuario_tipo: 'admin',
       usuario_email: adminEmail,
       datos_anteriores: { estado: c.estado },
-      datos_nuevos: { estado: 'repuesto' },
+      datos_nuevos: { estado: 'repuesto', numeroReposicion: reposicionNumber },
     },
   });
 
   return transformCorte(updated);
+}
+
+/**
+ * Get reposicion info for a client (count of previous reposiciones and tarifa values)
+ */
+export async function getClienteReposicionInfo(clienteId: bigint) {
+  // Count previous reposiciones
+  const previousCount = await prisma.cortes_servicio.count({
+    where: {
+      cliente_id: clienteId,
+      estado: 'repuesto',
+    },
+  });
+
+  // Get current tarifa
+  const tarifa = await prisma.tarifas.findFirst({
+    where: {
+      fecha_inicio: { lte: new Date() },
+    },
+    orderBy: { fecha_inicio: 'desc' },
+  });
+
+  return {
+    reposicionesPrevias: previousCount,
+    siguienteNumeroReposicion: previousCount >= 1 ? 2 : 1,
+    tarifaReposicion1: tarifa?.costo_reposicion_1 ? Number(tarifa.costo_reposicion_1) : 0,
+    tarifaReposicion2: tarifa?.costo_reposicion_2 ? Number(tarifa.costo_reposicion_2) : 0,
+  };
 }
