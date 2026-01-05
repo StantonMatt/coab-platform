@@ -97,11 +97,14 @@ export async function searchCustomers(
   // For RUT sorting, we need to extract numeric part and sort numerically
   // RUT format: XX.XXX.XXX-X or XXXXXXXXX (with or without dots/dash)
   // The body is everything except the last character (verification digit)
-  // Handle NULL/empty RUTs by putting them at the end consistently
+  // Handle NULL/empty RUTs: first for ASC, last for DESC
   let customerIds: bigint[] | null = null;
   if (useRutSort) {
     // Extract RUT body: if has dash, use part before dash; otherwise use all but last char
     // This handles both "12.345.678-5" and "123456785" formats
+    // For ASC: NULL RUTs first (0 < 1), for DESC: NULL RUTs last (1 > 0)
+    const nullFirst = sortDirection === 'asc' ? '0' : '1';
+    const nullLast = sortDirection === 'asc' ? '1' : '0';
     const sortedIds = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`
       WITH rut_numbers AS (
         SELECT 
@@ -119,7 +122,7 @@ export async function searchCustomers(
       SELECT id
       FROM rut_numbers
       ORDER BY 
-        CASE WHEN rut_num IS NULL THEN 1 ELSE 0 END ASC,
+        CASE WHEN rut_num IS NULL THEN ${nullFirst} ELSE ${nullLast} END ASC,
         rut_num ${sortDir},
         id ASC
       LIMIT ${limit} OFFSET ${skip}
