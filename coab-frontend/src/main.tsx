@@ -15,7 +15,7 @@ import ProfilePage from './pages/Profile';
 import AdminLoginPage from './pages/admin/Login';
 import AdminDashboardPage from './pages/admin/Dashboard';
 import AdminCustomersPage from './pages/admin/Customers';
-import AdminCustomerProfilePage from './pages/admin/CustomerProfile';
+import AdminCustomerProfilePage from './pages/admin/customer-profile';
 import AdminBatchPDFPage from './pages/admin/BatchPDF';
 import AdminPaymentsPage from './pages/admin/Payments';
 import AdminRutasPage from './pages/admin/Rutas';
