@@ -57,7 +57,9 @@ export async function searchCustomers(
   }
 
   // Build orderBy based on sortBy parameter
+  // Note: 'saldo' sorting is handled specially below with raw SQL
   let orderBy: any;
+  let useSaldoSort = false;
   switch (sortBy) {
     case 'rut':
       orderBy = { rut: sortDirection };
@@ -66,7 +68,9 @@ export async function searchCustomers(
       orderBy = { numero_cliente: sortDirection };
       break;
     case 'saldo':
-      orderBy = { estado_cuenta: sortDirection };
+      // Will be handled with raw SQL for sorting by pending boletas count
+      useSaldoSort = true;
+      orderBy = { id: 'asc' }; // Default, will be overridden
       break;
     case 'nombre':
     default:
@@ -74,52 +78,135 @@ export async function searchCustomers(
       break;
   }
 
-  // Get total count and customers in parallel
+  // Sanitize query for SQL use (defined here so it's available for raw SQL)
+  const sanitizedQueryForSql = query ? query.replace(/'/g, "''").trim() : '';
+
+  // For saldo sorting, we need to use raw SQL to sort by pending boletas count
+  let customerIds: bigint[] | null = null;
+  if (useSaldoSort) {
+    // Get sorted customer IDs using raw SQL with pending boletas count
+    const sortDir = sortDirection === 'asc' ? 'ASC' : 'DESC';
+    const searchCondition = sanitizedQueryForSql
+      ? `AND (
+          c.rut ILIKE '%${sanitizedQueryForSql}%' OR
+          c.numero_cliente ILIKE '%${sanitizedQueryForSql}%' OR
+          c.primer_nombre ILIKE '%${sanitizedQueryForSql}%' OR
+          c.primer_apellido ILIKE '%${sanitizedQueryForSql}%' OR
+          c.segundo_apellido ILIKE '%${sanitizedQueryForSql}%'
+        )`
+      : '';
+    
+    const sortedIds = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`
+      SELECT c.id
+      FROM clientes c
+      LEFT JOIN (
+        SELECT cliente_id, COUNT(*) as pending_count
+        FROM boletas
+        WHERE estado = 'pendiente'
+        GROUP BY cliente_id
+      ) b ON c.id = b.cliente_id
+      WHERE c.es_cliente_actual = true ${searchCondition}
+      ORDER BY COALESCE(b.pending_count, 0) ${sortDir}, c.id ASC
+      LIMIT ${limit} OFFSET ${skip}
+    `);
+    customerIds = sortedIds.map((r) => r.id);
+  }
+
+  // Get total count and customers
   const [total, customers] = await Promise.all([
     prisma.clientes.count({ where: whereClause }),
-    prisma.clientes.findMany({
-      where: whereClause,
-      take: limit,
-      skip,
-      orderBy,
-      select: {
-        id: true,
-        rut: true,
-        numero_cliente: true,
-        primer_nombre: true,
-        segundo_nombre: true,
-        primer_apellido: true,
-        segundo_apellido: true,
-        correo: true,
-        telefono: true,
-        estado_cuenta: true,
-        bloqueado_hasta: true,
-        direcciones: {
-          take: 1,
+    customerIds
+      ? // If we have pre-sorted IDs from raw SQL, fetch those specific customers
+        prisma.clientes.findMany({
+          where: { id: { in: customerIds } },
           select: {
-            direccion_calle: true,
-            direccion_numero: true,
-            poblacion: true,
+            id: true,
+            rut: true,
+            numero_cliente: true,
+            primer_nombre: true,
+            segundo_nombre: true,
+            primer_apellido: true,
+            segundo_apellido: true,
+            correo: true,
+            telefono: true,
+            estado_cuenta: true,
+            bloqueado_hasta: true,
+            direcciones: {
+              take: 1,
+              select: {
+                direccion_calle: true,
+                direccion_numero: true,
+                poblacion: true,
+              },
+            },
+            _count: {
+              select: {
+                boletas: {
+                  where: { estado: 'pendiente' },
+                },
+              },
+            },
           },
-        },
-      },
-    }),
+        })
+      : // Otherwise use normal Prisma query with ordering
+        prisma.clientes.findMany({
+          where: whereClause,
+          take: limit,
+          skip,
+          orderBy,
+          select: {
+            id: true,
+            rut: true,
+            numero_cliente: true,
+            primer_nombre: true,
+            segundo_nombre: true,
+            primer_apellido: true,
+            segundo_apellido: true,
+            correo: true,
+            telefono: true,
+            estado_cuenta: true,
+            bloqueado_hasta: true,
+            direcciones: {
+              take: 1,
+              select: {
+                direccion_calle: true,
+                direccion_numero: true,
+                poblacion: true,
+              },
+            },
+            _count: {
+              select: {
+                boletas: {
+                  where: { estado: 'pendiente' },
+                },
+              },
+            },
+          },
+        }),
   ]);
+
+  // If we used raw SQL for sorting, we need to reorder results to match the sorted IDs
+  let orderedCustomers = customers;
+  if (customerIds) {
+    const customerMap = new Map(customers.map((c) => [c.id, c]));
+    orderedCustomers = customerIds
+      .map((id) => customerMap.get(id))
+      .filter((c): c is NonNullable<typeof c> => c !== undefined);
+  }
 
   const totalPages = Math.ceil(total / limit);
   const hasNextPage = page < totalPages;
 
-  // For list view, use estado_cuenta to determine status instead of expensive balance queries
+  // For list view, check pending boletas count to determine moroso status
   // Exact balance is calculated when viewing individual customer profile
-  const customersWithSaldo = customers.map((customer) => {
+  const customersWithSaldo = orderedCustomers.map((customer) => {
     const direccion = customer.direcciones[0];
     const direccionStr = direccion
       ? `${direccion.direccion_calle} ${direccion.direccion_numero || ''}, ${direccion.poblacion}`.trim()
       : null;
 
-    // Use estado_cuenta from DB to determine if customer has debt
-    // saldo of 1 means "has debt" (moroso), 0 means "al dia"
-    const tieneSaldo = customer.estado_cuenta === 'MOROSO';
+    // Customer is moroso if they have any pending (unpaid) boletas
+    const tieneSaldo = customer._count.boletas > 0;
 
     return {
       id: customer.id.toString(),
@@ -152,7 +239,7 @@ export async function searchCustomers(
       total,
       totalPages,
       hasNextPage,
-      nextCursor: hasNextPage ? customers[customers.length - 1]?.id.toString() : null,
+      nextCursor: hasNextPage ? orderedCustomers[orderedCustomers.length - 1]?.id.toString() : null,
     },
   };
 }
