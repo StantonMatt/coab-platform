@@ -50,7 +50,7 @@ export default function CustomersPage() {
     endpoint: '/admin/clientes',
     queryKey: 'admin-customers',
     dataKey: 'data', // Clientes endpoint uses 'data' key
-    defaultSort: { column: 'nombre', direction: 'asc' },
+    defaultSort: { column: 'numeroCliente', direction: 'asc' },
     defaultFilters: { q: '' },
     debouncedFilterKeys: ['q'], // Debounce search input
     debounceMs: 300,
@@ -58,6 +58,13 @@ export default function CustomersPage() {
   });
 
   const columns = [
+    {
+      key: 'numeroCliente',
+      header: <SortableHeader column="numeroCliente" label="N° Cliente" />,
+      render: (customer: Customer) => (
+        <span className="font-mono text-sm text-slate-700">{customer.numeroCliente}</span>
+      ),
+    },
     {
       key: 'rut',
       header: <SortableHeader column="rut" label="RUT" />,
@@ -70,13 +77,6 @@ export default function CustomersPage() {
             <Lock className="h-4 w-4 text-red-500" aria-label="Cuenta bloqueada" />
           )}
         </div>
-      ),
-    },
-    {
-      key: 'numeroCliente',
-      header: <SortableHeader column="numeroCliente" label="N° Cliente" />,
-      render: (customer: Customer) => (
-        <span className="font-mono text-sm text-slate-700">{customer.numeroCliente}</span>
       ),
     },
     {
