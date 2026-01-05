@@ -158,23 +158,30 @@ export default function PaymentsPage() {
       ),
     },
     {
-      key: 'cliente',
-      header: <SortableHeader column="cliente" label="Cliente" />,
+      key: 'numeroCliente',
+      header: <SortableHeader column="numeroCliente" label="N° Cliente" />,
       render: (payment: Payment) => (
-        payment.cliente ? (
-          <div>
-            <span className="font-medium text-slate-900 block">
-              {payment.cliente.nombre}
-            </span>
-            <span className="text-xs text-slate-500">
-              {payment.cliente.rut
-                ? formatearRUT(payment.cliente.rut)
-                : `N° ${payment.cliente.numeroCliente}`}
-            </span>
-          </div>
-        ) : (
-          <span className="text-slate-400 italic">Sin cliente</span>
-        )
+        <span className="font-mono text-sm text-slate-700">
+          {payment.cliente?.numeroCliente || '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'rut',
+      header: <SortableHeader column="rut" label="RUT" />,
+      render: (payment: Payment) => (
+        <span className="font-mono text-sm text-slate-700">
+          {payment.cliente?.rut ? formatearRUT(payment.cliente.rut) : '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'nombre',
+      header: <SortableHeader column="cliente" label="Nombre" />,
+      render: (payment: Payment) => (
+        <span className="font-medium text-slate-900">
+          {payment.cliente?.nombre || <span className="text-slate-400 italic">Sin cliente</span>}
+        </span>
       ),
     },
     {
