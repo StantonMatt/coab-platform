@@ -95,14 +95,33 @@ export async function searchCustomers(
     : '';
 
   // For RUT sorting, we need to extract numeric part and sort numerically
-  // RUT format: XX.XXX.XXX-X - we extract everything before the dash and remove dots
+  // RUT format: XX.XXX.XXX-X or XXXXXXXXX (with or without dots/dash)
+  // The body is everything except the last character (verification digit)
+  // Handle NULL/empty RUTs by putting them at the end consistently
   let customerIds: bigint[] | null = null;
   if (useRutSort) {
+    // Extract RUT body: if has dash, use part before dash; otherwise use all but last char
+    // This handles both "12.345.678-5" and "123456785" formats
     const sortedIds = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`
-      SELECT c.id
-      FROM clientes c
-      WHERE c.es_cliente_actual = true ${searchCondition}
-      ORDER BY CAST(REGEXP_REPLACE(SPLIT_PART(c.rut, '-', 1), '[^0-9]', '', 'g') AS BIGINT) ${sortDir}, c.id ASC
+      WITH rut_numbers AS (
+        SELECT 
+          c.id,
+          CASE 
+            WHEN COALESCE(c.rut, '') = '' THEN NULL
+            WHEN POSITION('-' IN c.rut) > 0 THEN 
+              NULLIF(REGEXP_REPLACE(SPLIT_PART(c.rut, '-', 1), '[^0-9]', '', 'g'), '')::BIGINT
+            ELSE 
+              NULLIF(REGEXP_REPLACE(LEFT(c.rut, LENGTH(c.rut) - 1), '[^0-9]', '', 'g'), '')::BIGINT
+          END AS rut_num
+        FROM clientes c
+        WHERE c.es_cliente_actual = true ${searchCondition}
+      )
+      SELECT id
+      FROM rut_numbers
+      ORDER BY 
+        CASE WHEN rut_num IS NULL THEN 1 ELSE 0 END ASC,
+        rut_num ${sortDir},
+        id ASC
       LIMIT ${limit} OFFSET ${skip}
     `);
     customerIds = sortedIds.map((r) => r.id);
