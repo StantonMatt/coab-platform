@@ -21,7 +21,7 @@ const pagosRoutes: FastifyPluginAsync = async (fastify) => {
         tipoPago: z.string().optional(),
         estado: z.string().optional(),
         q: z.string().optional(),
-        sortBy: z.enum(['fecha', 'monto', 'cliente', 'estado']).optional().default('fecha'),
+        sortBy: z.enum(['fecha', 'monto', 'cliente', 'estado', 'numeroCliente', 'rut']).optional().default('fecha'),
         sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
       });
 

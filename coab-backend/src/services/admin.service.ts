@@ -873,7 +873,7 @@ export async function getAllPayments(options: {
   tipoPago?: string;
   estado?: string;
   search?: string;
-  sortBy?: 'fecha' | 'monto' | 'cliente' | 'estado';
+  sortBy?: 'fecha' | 'monto' | 'cliente' | 'estado' | 'numeroCliente' | 'rut';
   sortDirection?: 'asc' | 'desc';
 }) {
   const { page, limit, fechaDesde, fechaHasta, tipoPago, estado, search, sortBy = 'fecha', sortDirection = 'desc' } = options;
@@ -923,28 +923,146 @@ export async function getAllPayments(options: {
     ];
   }
 
-  // Build orderBy based on sortBy parameter
-  let orderBy: any;
-  switch (sortBy) {
-    case 'monto':
-      orderBy = { monto: sortDirection };
-      break;
-    case 'cliente':
-      orderBy = { cliente: { primer_apellido: sortDirection } };
-      break;
-    case 'estado':
-      orderBy = { estado: sortDirection };
-      break;
-    case 'fecha':
-    default:
-      orderBy = { fecha_pago: sortDirection };
-      break;
-  }
+  // Check if we need raw SQL for sorting by cliente fields
+  const useRawSqlSort = sortBy === 'numeroCliente' || sortBy === 'rut';
+  const sortDir = sortDirection.toUpperCase();
 
-  // Execute queries in parallel
-  const [pagos, total, aggregate] = await Promise.all([
-    // Get paginated payments
-    prisma.pagos.findMany({
+  // Get total and aggregate first (needed for all cases)
+  const [total, aggregate] = await Promise.all([
+    prisma.pagos.count({ where }),
+    prisma.pagos.aggregate({
+      where,
+      _sum: { monto: true },
+      _count: true,
+    }),
+  ]);
+
+  let pagos;
+
+  if (useRawSqlSort) {
+    // Build SQL WHERE conditions
+    const conditions: string[] = [];
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (fechaDesde) {
+      conditions.push(`p.fecha_pago >= $${paramIndex++}`);
+      params.push(fechaDesde);
+    }
+    if (fechaHasta) {
+      conditions.push(`p.fecha_pago <= $${paramIndex++}`);
+      params.push(fechaHasta);
+    }
+    if (tipoPago) {
+      conditions.push(`p.tipo_pago = $${paramIndex++}`);
+      params.push(tipoPago);
+    }
+    if (estado) {
+      conditions.push(`p.estado = $${paramIndex++}`);
+      params.push(estado);
+    }
+    if (search) {
+      const cleanSearch = search.replace(/[.\-]/g, '').toUpperCase();
+      conditions.push(`(
+        p.numero_transaccion ILIKE $${paramIndex} OR 
+        p.nombre_cliente ILIKE $${paramIndex} OR
+        p.rut_cliente ILIKE $${paramIndex + 1} OR
+        c.primer_nombre ILIKE $${paramIndex} OR
+        c.primer_apellido ILIKE $${paramIndex} OR
+        c.rut ILIKE $${paramIndex + 1} OR
+        c.numero_cliente ILIKE $${paramIndex}
+      )`);
+      params.push(`%${search}%`);
+      params.push(`%${cleanSearch}%`);
+      paramIndex += 2;
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Build ORDER BY clause based on sortBy
+    let orderByClause: string;
+    if (sortBy === 'numeroCliente') {
+      // Sort by numero_cliente numerically (cast to BIGINT)
+      // Handle NULL cliente: put at end for ASC, at beginning for DESC
+      const nullFirst = sortDirection === 'asc' ? '1' : '0';
+      const nullLast = sortDirection === 'asc' ? '0' : '1';
+      orderByClause = `
+        CASE WHEN c.numero_cliente IS NULL THEN ${nullFirst} ELSE ${nullLast} END ASC,
+        CAST(NULLIF(REGEXP_REPLACE(c.numero_cliente, '[^0-9]', '', 'g'), '') AS BIGINT) ${sortDir}
+      `;
+    } else {
+      // Sort by RUT numerically
+      const nullFirst = sortDirection === 'asc' ? '0' : '1';
+      const nullLast = sortDirection === 'asc' ? '1' : '0';
+      orderByClause = `
+        CASE WHEN c.rut IS NULL OR c.rut = '' OR c.rut = '-' THEN ${nullFirst} ELSE ${nullLast} END ASC,
+        CASE 
+          WHEN c.rut IS NULL OR c.rut = '' OR c.rut = '-' THEN 0
+          WHEN POSITION('-' IN c.rut) > 0 THEN 
+            CAST(NULLIF(REGEXP_REPLACE(SPLIT_PART(c.rut, '-', 1), '[^0-9]', '', 'g'), '') AS BIGINT)
+          ELSE 
+            CAST(NULLIF(REGEXP_REPLACE(LEFT(c.rut, LENGTH(c.rut) - 1), '[^0-9]', '', 'g'), '') AS BIGINT)
+        END ${sortDir}
+      `;
+    }
+
+    // Get payment IDs sorted
+    const sortedIds = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`
+      SELECT p.id
+      FROM pagos p
+      LEFT JOIN clientes c ON p.cliente_id = c.id
+      ${whereClause}
+      ORDER BY ${orderByClause}, p.id ASC
+      LIMIT ${limit} OFFSET ${skip}
+    `, ...params);
+
+    const paymentIds = sortedIds.map((r) => r.id);
+
+    if (paymentIds.length === 0) {
+      pagos = [];
+    } else {
+      // Fetch the full payment data for these IDs
+      const pagosData = await prisma.pagos.findMany({
+        where: { id: { in: paymentIds } },
+        include: {
+          cliente: {
+            select: {
+              id: true,
+              primer_nombre: true,
+              segundo_nombre: true,
+              primer_apellido: true,
+              segundo_apellido: true,
+              rut: true,
+              numero_cliente: true,
+            },
+          },
+        },
+      });
+
+      // Maintain the sorted order
+      const idToPayment = new Map(pagosData.map((p) => [p.id.toString(), p]));
+      pagos = paymentIds.map((id) => idToPayment.get(id.toString())).filter(Boolean);
+    }
+  } else {
+    // Standard Prisma sorting for other columns
+    let orderBy: any;
+    switch (sortBy) {
+      case 'monto':
+        orderBy = { monto: sortDirection };
+        break;
+      case 'cliente':
+        orderBy = { cliente: { primer_apellido: sortDirection } };
+        break;
+      case 'estado':
+        orderBy = { estado: sortDirection };
+        break;
+      case 'fecha':
+      default:
+        orderBy = { fecha_pago: sortDirection };
+        break;
+    }
+
+    pagos = await prisma.pagos.findMany({
       where,
       include: {
         cliente: {
@@ -962,19 +1080,11 @@ export async function getAllPayments(options: {
       orderBy,
       skip,
       take: limit,
-    }),
-    // Get total count
-    prisma.pagos.count({ where }),
-    // Get sum of amounts for the filtered results
-    prisma.pagos.aggregate({
-      where,
-      _sum: { monto: true },
-      _count: true,
-    }),
-  ]);
+    });
+  }
 
   // Transform results
-  const transformedPagos = pagos.map((pago) => ({
+  const transformedPagos = pagos.map((pago: any) => ({
     id: pago.id.toString(),
     monto: Number(pago.monto),
     fechaPago: pago.fecha_pago.toISOString().split('T')[0],
