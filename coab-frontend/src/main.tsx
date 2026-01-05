@@ -20,7 +20,7 @@ import AdminBatchPDFPage from './pages/admin/BatchPDF';
 import AdminPaymentsPage from './pages/admin/Payments';
 import AdminRutasPage from './pages/admin/Rutas';
 import AdminTarifasPage from './pages/admin/Tarifas';
-import AdminSubsidiosPage from './pages/admin/Subsidios';
+import AdminSubsidiosPage from './pages/admin/subsidios';
 import AdminMedidoresPage from './pages/admin/Medidores';
 import AdminLecturasPage from './pages/admin/Lecturas';
 import AdminMultasPage from './pages/admin/Multas';

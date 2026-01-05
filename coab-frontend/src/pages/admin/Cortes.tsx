@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Scissors, Plus, Search, RefreshCcw, Pencil, Trash2, Info } from 'lucide-react';
 import { formatearPesos, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
