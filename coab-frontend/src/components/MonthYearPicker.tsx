@@ -33,8 +33,10 @@ export default function MonthYearPicker({
   availablePeriods,
   isLoading = false,
 }: MonthYearPickerProps) {
-  // Parse selected period
-  const [selectedYear, selectedMonth] = selectedPeriodo.split('-').map(Number);
+  // Parse selected period (handle empty string)
+  const [selectedYear, selectedMonth] = selectedPeriodo 
+    ? selectedPeriodo.split('-').map(Number) 
+    : [0, 0];
   
   // Determine the year range from available periods
   const years = [...new Set(availablePeriods.map(p => p.año))].sort((a, b) => b - a);

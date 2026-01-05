@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
   Users, CreditCard, FileText, Map, DollarSign, Percent, Gauge, FileSearch,
-  AlertTriangle, Tag, Scissors, RefreshCw, LogOut
+  AlertTriangle, Tag, Scissors, RefreshCw, LogOut, FileSpreadsheet
 } from 'lucide-react';
 import { getCurrentAdminUser, hasPermission, type AdminRole, type PermissionEntity } from '@/components/admin';
 
@@ -96,6 +96,7 @@ export default function AdminDashboardPage() {
       title: 'Herramientas',
       color: 'slate',
       cards: [
+        { title: 'Generar Boletas', description: 'Calcular e importar', icon: <FileSpreadsheet className="h-6 w-6" />, href: '/admin/boletas/calcular', color: 'slate' },
         { title: 'Generar PDFs', description: 'Boletas en lote', icon: <FileText className="h-6 w-6" />, href: '/admin/boletas/generar', color: 'slate' },
       ],
     },

@@ -40,18 +40,30 @@ export const FORMATOS_FECHA = {
  * Formats a date using Chilean timezone (America/Santiago)
  * This ensures dates are always displayed correctly regardless of the user's browser timezone.
  * 
- * @param date - Date to format (Date object or ISO string)
+ * @param date - Date to format (Date object or ISO string), or null/undefined
  * @param formato - Format string (use FORMATOS_FECHA constants)
- * @returns Formatted date string in Chilean timezone
+ * @returns Formatted date string in Chilean timezone, or '-' if date is null/undefined
  * 
  * @example
  * formatearFecha(new Date(), FORMATOS_FECHA.CORTO)    // '15/10/2025'
  * formatearFecha(new Date(), FORMATOS_FECHA.LARGO)    // '15 de octubre de 2025'
  * formatearFecha(new Date(), FORMATOS_FECHA.CON_HORA) // '15 de octubre a las 14:30'
  * formatearFecha('2024-01-15T00:00:00.000Z', FORMATOS_FECHA.CORTO) // '15/01/2024' (not 14/01!)
+ * formatearFecha(null, FORMATOS_FECHA.CORTO)          // '-'
  */
-export function formatearFecha(date: Date | string, formato: string = FORMATOS_FECHA.CORTO): string {
+export function formatearFecha(date: Date | string | null | undefined, formato: string = FORMATOS_FECHA.CORTO): string {
+  // Handle null/undefined values gracefully
+  if (date === null || date === undefined) {
+    return '-';
+  }
+  
   const dateObj = typeof date === 'string' ? new Date(date) : date;
+  
+  // Check for invalid date
+  if (isNaN(dateObj.getTime())) {
+    return '-';
+  }
+  
   return formatInTimeZone(dateObj, CHILE_TIMEZONE, formato, { locale: es });
 }
 
@@ -98,17 +110,28 @@ export function formatearPeriodo(date: Date | string): string {
  * 
  * Use this for PostgreSQL DATE columns (not TIMESTAMPTZ).
  * 
- * @param date - Date to format (Date object or ISO string from database)
+ * @param date - Date to format (Date object or ISO string from database), or null/undefined
  * @param formato - Format string (use FORMATOS_FECHA constants, but without time components)
- * @returns Formatted date string preserving the original UTC date
+ * @returns Formatted date string preserving the original UTC date, or '-' if date is null/undefined
  * 
  * @example
  * // Database has: 2024-01-01 00:00:00+00
  * formatearFechaSinHora('2024-01-01T00:00:00.000Z', FORMATOS_FECHA.CORTO) // '01/01/2024' ✓
  * formatearFecha('2024-01-01T00:00:00.000Z', FORMATOS_FECHA.CORTO)        // '31/12/2023' ✗
+ * formatearFechaSinHora(null, FORMATOS_FECHA.CORTO)                       // '-'
  */
-export function formatearFechaSinHora(date: Date | string, formato: string = FORMATOS_FECHA.CORTO): string {
+export function formatearFechaSinHora(date: Date | string | null | undefined, formato: string = FORMATOS_FECHA.CORTO): string {
+  // Handle null/undefined values gracefully
+  if (date === null || date === undefined) {
+    return '-';
+  }
+  
   const dateObj = typeof date === 'string' ? new Date(date) : date;
+  
+  // Check for invalid date
+  if (isNaN(dateObj.getTime())) {
+    return '-';
+  }
   
   // Extract UTC date components to avoid timezone shift
   const year = dateObj.getUTCFullYear();

@@ -27,6 +27,7 @@ import AdminMultasPage from './pages/admin/Multas';
 import AdminDescuentosPage from './pages/admin/Descuentos';
 import AdminCortesPage from './pages/admin/Cortes';
 import AdminRepactacionesPage from './pages/admin/Repactaciones';
+import AdminBoletasGenerarPage from './pages/admin/BoletasGenerar';
 import './index.css';
 
 // Initialize Mercado Pago SDK (public key will be fetched from backend)
@@ -69,6 +70,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/admin/clientes" element={<AdminCustomersPage />} />
           <Route path="/admin/clientes/:id" element={<AdminCustomerProfilePage />} />
           <Route path="/admin/pagos" element={<AdminPaymentsPage />} />
+          <Route path="/admin/boletas/calcular" element={<AdminBoletasGenerarPage />} />
           <Route path="/admin/boletas/generar" element={<AdminBatchPDFPage />} />
           <Route path="/admin/rutas" element={<AdminRutasPage />} />
           <Route path="/admin/tarifas" element={<AdminTarifasPage />} />

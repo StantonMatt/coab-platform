@@ -256,7 +256,7 @@ export default function TarifasPage() {
     },
     {
       key: 'costoM3Agua',
-      header: <SortableHeader column="costoM3Agua" label="Agua/m³" />,
+      header: <SortableHeader column="costoM3Agua" label="Agua" />,
       className: 'hidden sm:table-cell',
       headerClassName: 'hidden sm:table-cell',
       render: (tarifa: Tarifa) => (
@@ -266,8 +266,19 @@ export default function TarifasPage() {
       ),
     },
     {
+      key: 'costoM3AlcantarilladoTratamiento',
+      header: 'Alc+Trat',
+      className: 'hidden md:table-cell',
+      headerClassName: 'hidden md:table-cell',
+      render: (tarifa: Tarifa) => (
+        <span className="text-slate-700">
+          {tarifa.costoM3AlcantarilladoTratamiento ? formatearPesos(tarifa.costoM3AlcantarilladoTratamiento) : '-'}
+        </span>
+      ),
+    },
+    {
       key: 'costoM3Alcantarillado',
-      header: 'Alcant./m³',
+      header: 'Alcant.',
       className: 'hidden md:table-cell',
       headerClassName: 'hidden md:table-cell',
       render: (tarifa: Tarifa) => (
@@ -277,8 +288,19 @@ export default function TarifasPage() {
       ),
     },
     {
+      key: 'costoM3Tratamiento',
+      header: 'Tratam.',
+      className: 'hidden md:table-cell',
+      headerClassName: 'hidden md:table-cell',
+      render: (tarifa: Tarifa) => (
+        <span className="text-slate-700">
+          {tarifa.costoM3Tratamiento ? formatearPesos(tarifa.costoM3Tratamiento) : '-'}
+        </span>
+      ),
+    },
+    {
       key: 'cargoFijo',
-      header: <SortableHeader column="cargoFijo" label="Cargo Fijo" />,
+      header: <SortableHeader column="cargoFijo" label="C. Fijo" />,
       className: 'hidden md:table-cell',
       headerClassName: 'hidden md:table-cell',
       render: (tarifa: Tarifa) => (
@@ -286,12 +308,30 @@ export default function TarifasPage() {
       ),
     },
     {
-      key: 'tasaIva',
-      header: 'IVA',
+      key: 'costoDespacho',
+      header: 'Despacho',
       className: 'hidden lg:table-cell',
       headerClassName: 'hidden lg:table-cell',
       render: (tarifa: Tarifa) => (
-        <span className="text-sm text-slate-600">{(tarifa.tasaIva * 100).toFixed(0)}%</span>
+        <span className="text-slate-700">{formatearPesos(tarifa.costoDespacho)}</span>
+      ),
+    },
+    {
+      key: 'costoReposicion1',
+      header: 'Repos. 1',
+      className: 'hidden lg:table-cell',
+      headerClassName: 'hidden lg:table-cell',
+      render: (tarifa: Tarifa) => (
+        <span className="text-slate-700">{formatearPesos(tarifa.costoReposicion1)}</span>
+      ),
+    },
+    {
+      key: 'costoReposicion2',
+      header: 'Repos. 2',
+      className: 'hidden lg:table-cell',
+      headerClassName: 'hidden lg:table-cell',
+      render: (tarifa: Tarifa) => (
+        <span className="text-slate-700">{formatearPesos(tarifa.costoReposicion2)}</span>
       ),
     },
   ];

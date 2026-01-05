@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import adminApiClient from '@/lib/adminApi';
-import { Plus, RefreshCw, Check, X, Search } from 'lucide-react';
+import { Plus, RefreshCw, Check, X, Search, Pencil, Trash2 } from 'lucide-react';
 import { formatearPesos, formatearFecha, formatearFechaSinHora, FORMATOS_FECHA } from '@coab/utils';
 
 interface Repactacion {
@@ -76,21 +76,182 @@ interface SolicitudRepactacion {
 }
 
 interface RepactacionFormData {
-  clienteId: string;
+  numeroCliente: string;
   montoDeudaInicial: string;
   totalCuotas: string;
+  fechaInicio: string; // Format: YYYY-MM
   observaciones: string;
 }
 
+// Month names in Spanish
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+               'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+// Generate allowed month options: 5 months back to 2 months forward
+function generateMonthOptions(): { value: string; label: string }[] {
+  const options: { value: string; label: string }[] = [];
+  const now = new Date();
+  
+  // Start from 5 months ago, go to 2 months ahead (8 total options)
+  for (let offset = -5; offset <= 2; offset++) {
+    const date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1; // 1-indexed
+    const value = `${year}-${String(month).padStart(2, '0')}`;
+    const label = `${MESES[month - 1]} ${year}`;
+    options.push({ value, label });
+  }
+  
+  return options;
+}
+
+const monthOptions = generateMonthOptions();
+
+// Get default month based on current day:
+// - Days 1-15: default to previous month
+// - Days 16-31: default to current month
+function getDefaultMonth(): string {
+  const now = new Date();
+  const currentDay = now.getDate();
+  const offset = currentDay <= 15 ? -1 : 0;
+  const date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
 const emptyForm: RepactacionFormData = {
-  clienteId: '',
+  numeroCliente: '',
   montoDeudaInicial: '',
   totalCuotas: '12',
+  fechaInicio: getDefaultMonth(),
   observaciones: '',
 };
 
 interface RepactacionFilters extends Record<string, unknown> {
   estado: string;
+}
+
+// Edit Form Component
+function EditRepactacionForm({
+  repactacion,
+  monthOptions,
+  onSave,
+  onCancel,
+  isLoading,
+}: {
+  repactacion: Repactacion;
+  monthOptions: { value: string; label: string }[];
+  onSave: (data: Record<string, unknown>) => void;
+  onCancel: () => void;
+  isLoading: boolean;
+}) {
+  // Parse the fechaInicio to YYYY-MM format
+  const parseFechaInicio = (fecha: string | null): string => {
+    if (!fecha) return monthOptions[0]?.value || '';
+    const date = new Date(fecha);
+    const year = date.getUTCFullYear();
+    const month = date.getUTCMonth() + 1;
+    return `${year}-${String(month).padStart(2, '0')}`;
+  };
+
+  const [monto, setMonto] = useState(String(repactacion.montoDeudaInicial));
+  const [cuotas, setCuotas] = useState(String(repactacion.totalCuotas));
+  const [fechaInicio, setFechaInicio] = useState(parseFechaInicio(repactacion.fechaInicio));
+  const [observaciones, setObservaciones] = useState(repactacion.observaciones || '');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const data: Record<string, unknown> = {
+      montoDeudaInicial: parseFloat(monto),
+      totalCuotas: parseInt(cuotas),
+      fechaInicio: `${fechaInicio}-01`,
+    };
+    if (observaciones.trim()) {
+      data.observaciones = observaciones.trim();
+    }
+    onSave(data);
+  };
+
+  const cuotaMensual = parseFloat(monto) / parseInt(cuotas) || 0;
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="p-3 bg-slate-50 rounded-lg text-sm">
+        <div className="grid grid-cols-2 gap-2">
+          <span className="text-slate-500">Convenio:</span>
+          <span className="font-medium">{repactacion.numeroConvenio || '-'}</span>
+          <span className="text-slate-500">Cliente:</span>
+          <span className="font-medium">{repactacion.cliente?.nombre || repactacion.numeroCliente}</span>
+        </div>
+      </div>
+
+      <div>
+        <Label>Monto de Deuda *</Label>
+        <Input
+          type="number"
+          value={monto}
+          onChange={(e) => setMonto(e.target.value)}
+          required
+          min="1"
+        />
+      </div>
+
+      <div>
+        <Label>Número de Cuotas *</Label>
+        <Input
+          type="number"
+          value={cuotas}
+          onChange={(e) => setCuotas(e.target.value)}
+          required
+          min="1"
+          max="120"
+        />
+      </div>
+
+      {parseFloat(monto) > 0 && parseInt(cuotas) > 0 && (
+        <div className="p-3 bg-blue-50 rounded-lg text-center">
+          <p className="text-sm text-blue-600">Cuota Mensual Estimada</p>
+          <p className="text-xl font-bold text-blue-700">{formatearPesos(Math.round(cuotaMensual))}</p>
+        </div>
+      )}
+
+      <div>
+        <Label>Fecha de Inicio *</Label>
+        <Select value={fechaInicio} onValueChange={setFechaInicio}>
+          <SelectTrigger>
+            <SelectValue placeholder="Seleccione mes" />
+          </SelectTrigger>
+          <SelectContent>
+            {monthOptions.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div>
+        <Label>Observaciones</Label>
+        <Textarea
+          value={observaciones}
+          onChange={(e) => setObservaciones(e.target.value)}
+          placeholder="Notas adicionales..."
+          rows={2}
+        />
+      </div>
+
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancelar
+        </Button>
+        <Button type="submit" className="bg-blue-600 hover:bg-blue-700" disabled={isLoading}>
+          {isLoading ? 'Guardando...' : 'Guardar Cambios'}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
 }
 
 export default function AdminRepactacionesPage() {
@@ -125,12 +286,23 @@ export default function AdminRepactacionesPage() {
   const [selectedRepactacion, setSelectedRepactacion] = useState<Repactacion | null>(null);
 
   // Confirm dialog states
-  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
-  const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveCuotas, setApproveCuotas] = useState('12');
+
+  // Edit and delete states
+  const [editingRepactacion, setEditingRepactacion] = useState<Repactacion | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Finalizar (complete/cancel) states
+  const [finalizingRepactacion, setFinalizingRepactacion] = useState<Repactacion | null>(null);
+  const [finalizarEstado, setFinalizarEstado] = useState<'completado' | 'cancelado'>('completado');
+
+  // Permission checks
+  const canEdit = useCanAccess('repactaciones', 'edit');
+  const canDelete = useCanAccess('repactaciones', 'delete');
 
   // Query for solicitudes
   const { data: solicitudesData, isLoading: loadingSolicitudes } = useQuery({
@@ -158,12 +330,19 @@ export default function AdminRepactacionesPage() {
 
   const createMutation = useMutation({
     mutationFn: async (data: RepactacionFormData) => {
-      return adminApiClient.post('/admin/repactaciones', {
-        clienteId: data.clienteId,
+      // Format fechaInicio as first day of selected month: YYYY-MM-01
+      const fechaInicio = `${data.fechaInicio}-01`;
+      const payload: Record<string, unknown> = {
+        numeroCliente: data.numeroCliente.trim(),
         montoDeudaInicial: parseFloat(data.montoDeudaInicial),
         totalCuotas: parseInt(data.totalCuotas),
-        observaciones: data.observaciones || null,
-      });
+        fechaInicio,
+      };
+      // Only add observaciones if it has a value (Zod expects string | undefined, not null)
+      if (data.observaciones?.trim()) {
+        payload.observaciones = data.observaciones.trim();
+      }
+      return adminApiClient.post('/admin/repactaciones', payload);
     },
     onSuccess: () => {
       toast({ title: 'Repactación creada', description: 'La repactación se ha creado exitosamente.' });
@@ -219,20 +398,57 @@ export default function AdminRepactacionesPage() {
     },
   });
 
-  const cancelMutation = useMutation({
-    mutationFn: async (id: string) => {
-      return adminApiClient.post(`/admin/repactaciones/${id}/cancelar`);
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Record<string, unknown> }) => {
+      return adminApiClient.patch(`/admin/repactaciones/${id}`, data);
     },
     onSuccess: () => {
-      toast({ title: 'Repactación cancelada', description: 'La repactación ha sido cancelada.' });
+      toast({ title: 'Repactación actualizada', description: 'Los cambios se guardaron correctamente.' });
       refetchRepactaciones();
-      setCancelConfirmOpen(false);
-      setCancelingId(null);
+      setEditingRepactacion(null);
     },
     onError: (error: any) => {
       toast({
         title: 'Error',
-        description: error.response?.data?.error?.message || 'No se pudo cancelar la repactación.',
+        description: error.response?.data?.error?.message || 'No se pudo actualizar la repactación.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return adminApiClient.delete(`/admin/repactaciones/${id}`);
+    },
+    onSuccess: () => {
+      toast({ title: 'Repactación eliminada', description: 'La repactación ha sido eliminada.' });
+      refetchRepactaciones();
+      setDeleteConfirmOpen(false);
+      setDeletingId(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'No se pudo eliminar la repactación.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const finalizeMutation = useMutation({
+    mutationFn: async ({ id, estado }: { id: string; estado: string }) => {
+      return adminApiClient.patch(`/admin/repactaciones/${id}`, { estado });
+    },
+    onSuccess: () => {
+      const msg = finalizarEstado === 'completado' ? 'completada' : 'anulada';
+      toast({ title: 'Repactación finalizada', description: `La repactación ha sido ${msg}.` });
+      refetchRepactaciones();
+      setFinalizingRepactacion(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: 'Error',
+        description: error.response?.data?.error?.message || 'No se pudo finalizar la repactación.',
         variant: 'destructive',
       });
     },
@@ -292,7 +508,7 @@ export default function AdminRepactacionesPage() {
       render: (r: Repactacion) => (
         <div>
           <span className="font-medium text-slate-900">
-            {r.numeroConvenio || `#${r.id}`}
+            {r.numeroConvenio || '-'}
           </span>
           <div className="text-xs text-slate-500">Cliente: {r.numeroCliente}</div>
         </div>
@@ -510,7 +726,7 @@ export default function AdminRepactacionesPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="font-medium text-slate-900 text-lg">
-                    {selectedRepactacion.numeroConvenio || `Convenio #${selectedRepactacion.id}`}
+                    Convenio {selectedRepactacion.numeroConvenio || '-'}
                   </span>
                   <p className="text-sm text-slate-500">
                     Cliente: {selectedRepactacion.cliente?.nombre}
@@ -549,25 +765,83 @@ export default function AdminRepactacionesPage() {
                 )}
               </div>
 
-              {/* Actions */}
+              {/* Finalizar Repactación - only for active */}
               {selectedRepactacion.estado === 'activo' && (
-                <div className="pt-4 border-t border-slate-200">
-                  <PermissionGate entity="repactaciones" action="delete">
-                    <Button
-                      variant="destructive"
-                      className="w-full"
-                      onClick={() => {
-                        setCancelingId(selectedRepactacion.id);
-                        setCancelConfirmOpen(true);
-                        setSelectedRepactacion(null);
-                      }}
-                    >
-                      <X className="h-4 w-4 mr-2" />
-                      Cancelar Repactación
-                    </Button>
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-sm text-amber-800 mb-3">
+                    <strong>Finalizar Repactación:</strong> Termina la repactación cuando el cliente 
+                    completa el pago o cuando se anula por impago.
+                  </p>
+                  <PermissionGate entity="repactaciones" action="edit">
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-green-300 text-green-700 hover:bg-green-50"
+                        onClick={() => {
+                          setFinalizingRepactacion(selectedRepactacion);
+                          setFinalizarEstado('completado');
+                          setSelectedRepactacion(null);
+                        }}
+                      >
+                        <Check className="h-4 w-4 mr-2" />
+                        Completada
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-red-300 text-red-700 hover:bg-red-50"
+                        onClick={() => {
+                          setFinalizingRepactacion(selectedRepactacion);
+                          setFinalizarEstado('cancelado');
+                          setSelectedRepactacion(null);
+                        }}
+                      >
+                        <X className="h-4 w-4 mr-2" />
+                        Anulada
+                      </Button>
+                    </div>
                   </PermissionGate>
                 </div>
               )}
+
+              {/* Corregir registro */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                <p className="text-sm text-slate-600 mb-3">
+                  <strong>Corregir registro:</strong> Modifica o elimina este registro 
+                  específico (para corregir errores de entrada).
+                </p>
+                <div className="flex gap-2">
+                  {canEdit && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setEditingRepactacion(selectedRepactacion);
+                        setSelectedRepactacion(null);
+                      }}
+                    >
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Editar
+                    </Button>
+                  )}
+                  {canDelete && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-red-600 hover:text-red-700 border-red-200 hover:bg-red-50"
+                      onClick={() => {
+                        setDeletingId(selectedRepactacion.id);
+                        setDeleteConfirmOpen(true);
+                        setSelectedRepactacion(null);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Eliminar Registro
+                    </Button>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </DialogContent>
@@ -581,13 +855,13 @@ export default function AdminRepactacionesPage() {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <Label>ID del Cliente *</Label>
+              <Label>Número de Cliente *</Label>
               <Input
                 type="text"
-                value={formData.clienteId}
-                onChange={(e) => setFormData({ ...formData, clienteId: e.target.value })}
+                value={formData.numeroCliente}
+                onChange={(e) => setFormData({ ...formData, numeroCliente: e.target.value })}
                 required
-                placeholder="Ingrese ID del cliente"
+                placeholder="Ej: 110710"
               />
             </div>
             <div>
@@ -602,21 +876,40 @@ export default function AdminRepactacionesPage() {
             </div>
             <div>
               <Label>Número de Cuotas *</Label>
-              <Select
+              <Input
+                type="number"
+                min="1"
+                max="120"
                 value={formData.totalCuotas}
-                onValueChange={(val) => setFormData({ ...formData, totalCuotas: val })}
+                onChange={(e) => setFormData({ ...formData, totalCuotas: e.target.value })}
+                required
+                placeholder="Ej: 12"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Ingrese el número de cuotas (1-120)
+              </p>
+            </div>
+
+            <div>
+              <Label>Fecha de Inicio *</Label>
+              <Select
+                value={formData.fechaInicio}
+                onValueChange={(val) => setFormData({ ...formData, fechaInicio: val })}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Seleccione mes" />
                 </SelectTrigger>
                 <SelectContent>
-                  {[3, 6, 9, 12, 18, 24, 36].map((n) => (
-                    <SelectItem key={n} value={n.toString()}>
-                      {n} cuotas
+                  {monthOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-slate-500 mt-1">
+                La repactación iniciará el día 1 del mes seleccionado
+              </p>
             </div>
 
             {/* Preview */}
@@ -666,18 +959,17 @@ export default function AdminRepactacionesPage() {
           <div className="space-y-4">
             <div>
               <Label>Número de Cuotas Aprobadas</Label>
-              <Select value={approveCuotas} onValueChange={setApproveCuotas}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[3, 6, 9, 12, 18, 24, 36].map((n) => (
-                    <SelectItem key={n} value={n.toString()}>
-                      {n} cuotas
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                type="number"
+                min="1"
+                max="120"
+                value={approveCuotas}
+                onChange={(e) => setApproveCuotas(e.target.value)}
+                placeholder="Ej: 12"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Ingrese el número de cuotas aprobadas (1-120)
+              </p>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setApprovingId(null)}>
@@ -695,17 +987,51 @@ export default function AdminRepactacionesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Cancel Confirmation */}
+      {/* Finalizar Confirmation */}
       <ConfirmDialog
-        open={cancelConfirmOpen}
-        onOpenChange={setCancelConfirmOpen}
-        title="¿Cancelar repactación?"
-        description="Esta acción cancelará la repactación. El saldo restante volverá al cliente."
-        onConfirm={() => cancelingId && cancelMutation.mutate(cancelingId)}
-        isLoading={cancelMutation.isPending}
-        variant="destructive"
-        confirmText="Cancelar Repactación"
+        open={!!finalizingRepactacion}
+        onOpenChange={() => setFinalizingRepactacion(null)}
+        title={finalizarEstado === 'completado' ? '¿Marcar como completada?' : '¿Anular repactación?'}
+        description={
+          finalizarEstado === 'completado'
+            ? 'Esta acción marcará la repactación como completada. El cliente ha cumplido con el convenio de pago.'
+            : 'Esta acción anulará la repactación. El saldo restante volverá al cliente como deuda pendiente.'
+        }
+        onConfirm={() => finalizingRepactacion && finalizeMutation.mutate({ id: finalizingRepactacion.id, estado: finalizarEstado })}
+        isLoading={finalizeMutation.isPending}
+        variant={finalizarEstado === 'completado' ? 'default' : 'destructive'}
+        confirmText={finalizarEstado === 'completado' ? 'Marcar Completada' : 'Anular Repactación'}
       />
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        onOpenChange={setDeleteConfirmOpen}
+        title="¿Eliminar repactación?"
+        description="Esta acción eliminará permanentemente la repactación. Use esto solo para corregir errores de entrada."
+        onConfirm={() => deletingId && deleteMutation.mutate(deletingId)}
+        isLoading={deleteMutation.isPending}
+        variant="destructive"
+        confirmText="Eliminar"
+      />
+
+      {/* Edit Modal */}
+      <Dialog open={!!editingRepactacion} onOpenChange={() => setEditingRepactacion(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Editar Repactación</DialogTitle>
+          </DialogHeader>
+          {editingRepactacion && (
+            <EditRepactacionForm
+              repactacion={editingRepactacion}
+              monthOptions={monthOptions}
+              onSave={(data) => updateMutation.mutate({ id: editingRepactacion.id, data })}
+              onCancel={() => setEditingRepactacion(null)}
+              isLoading={updateMutation.isPending}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Reject Confirmation */}
       <ConfirmDialog

@@ -70,6 +70,7 @@ export const PERMISSIONS: Record<PermissionEntity, Partial<Record<PermissionActi
     create: SUPERVISOR_UP,
     edit: SUPERVISOR_UP,
     cancel: ADMIN_ONLY,
+    delete: ADMIN_ONLY,
   },
   solicitudes_repactacion: {
     view: ALL_ROLES,

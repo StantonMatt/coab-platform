@@ -16,8 +16,10 @@ import * as multasService from '../services/multas.service.js';
 import * as descuentosService from '../services/descuentos.service.js';
 import * as cortesService from '../services/cortes.service.js';
 import * as repactacionesService from '../services/repactaciones.service.js';
+import * as boletaGenerationService from '../services/boleta-generation.service.js';
 import { requireAdmin, requirePermission } from '../middleware/auth.middleware.js';
 import { z } from 'zod';
+import { generarPreviewSchema, importarBoletasSchema } from '../schemas/boleta-generation.schema.js';
 
 // Schema for batch PDF generation
 const batchPDFSchema = z.object({
@@ -3056,12 +3058,12 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/repactaciones', { preHandler: requirePermission('repactaciones', 'create') }, async (request, reply) => {
     try {
       const data = z.object({
-        clienteId: z.string().regex(/^\d+$/),
+        numeroCliente: z.string().min(1, 'Número de cliente requerido'),
         montoDeudaInicial: z.number().positive(),
-        totalCuotas: z.number().int().min(1).max(60),
-        fechaInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        numeroConvenio: z.string().optional(),
-        observaciones: z.string().optional(),
+        totalCuotas: z.number().int().min(1).max(120),
+        fechaInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        numeroConvenio: z.string().nullish(),
+        observaciones: z.string().nullish(),
       }).parse(request.body);
       return reply.code(201).send(await repactacionesService.createRepactacion(data, request.user!.email!));
     } catch (error: any) {
@@ -3090,6 +3092,17 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       if (error.message?.includes('no encontrada')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
       if (error.message?.includes('ya está')) return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });
       return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  fastify.delete('/repactaciones/:id', { preHandler: requirePermission('repactaciones', 'delete') }, async (request, reply) => {
+    try {
+      const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(request.params);
+      return await repactacionesService.deleteRepactacion(BigInt(id), request.user!.email!);
+    } catch (error: any) {
+      if (error.message?.includes('no encontrada')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
+      fastify.log.error(error);
+      return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error al eliminar repactación' } });
     }
   });
 
@@ -3124,6 +3137,62 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       if (error.message?.includes('no encontrada')) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: error.message } });
       if (error.message?.includes('ya fue')) return reply.code(409).send({ error: { code: 'CONFLICT', message: error.message } });
       return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Error' } });
+    }
+  });
+
+  // =========================================
+  // BOLETA GENERATION TOOL (Herramienta)
+  // =========================================
+
+  /**
+   * POST /admin/boletas/generar-preview
+   * Preview boletas for a period without saving to database
+   */
+  fastify.post('/boletas/generar-preview', { preHandler: requirePermission('boletas', 'create') }, async (request, reply) => {
+    try {
+      const { periodo } = generarPreviewSchema.parse(request.body);
+      const result = await boletaGenerationService.generateBoletasPreview(periodo);
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({ 
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } 
+        });
+      }
+      fastify.log.error(error);
+      return reply.code(500).send({ 
+        error: { code: 'INTERNAL_ERROR', message: error.message || 'Error al generar preview' } 
+      });
+    }
+  });
+
+  /**
+   * POST /admin/boletas/importar
+   * Import boletas for a period (save to database)
+   */
+  fastify.post('/boletas/importar', { preHandler: requirePermission('boletas', 'create') }, async (request, reply) => {
+    try {
+      const { periodo, sobreescribir } = importarBoletasSchema.parse(request.body);
+      const result = await boletaGenerationService.importBoletas(periodo, { sobreescribir });
+      
+      if (result.errores.length > 0) {
+        return reply.code(400).send({
+          error: { code: 'IMPORT_ERROR', message: result.errores[0] },
+          resultado: result
+        });
+      }
+      
+      return result;
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return reply.code(400).send({ 
+          error: { code: 'VALIDATION_ERROR', message: error.errors[0].message } 
+        });
+      }
+      fastify.log.error(error);
+      return reply.code(500).send({ 
+        error: { code: 'INTERNAL_ERROR', message: error.message || 'Error al importar boletas' } 
+      });
     }
   });
 };

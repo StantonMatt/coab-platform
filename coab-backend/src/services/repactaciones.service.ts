@@ -75,26 +75,62 @@ export async function getRepactacionesByCliente(clienteId: bigint) {
 }
 
 export async function createRepactacion(data: any, adminEmail: string) {
-  const cliente = await prisma.clientes.findUnique({ where: { id: BigInt(data.clienteId) } });
-  if (!cliente) throw new Error('Cliente no encontrado');
+  // Look up client by numero_cliente (what admins know) instead of database ID
+  const cliente = await prisma.clientes.findFirst({ 
+    where: { 
+      numero_cliente: data.numeroCliente,
+      es_cliente_actual: true 
+    } 
+  });
+  if (!cliente) throw new Error('Cliente no encontrado con número: ' + data.numeroCliente);
+
+  // Default fechaInicio to today if not provided
+  const fechaInicio = data.fechaInicio ? new Date(data.fechaInicio) : new Date();
+
+  // Auto-generate numero_convenio: find the highest existing number and add 1
+  let numeroConvenio = data.numeroConvenio;
+  if (!numeroConvenio) {
+    // Get all existing numero_convenio values and find the max numerically
+    const allRepactaciones = await prisma.repactaciones.findMany({
+      where: {
+        numero_convenio: { not: null }
+      },
+      select: {
+        numero_convenio: true
+      }
+    });
+    
+    let maxNumber = 0;
+    for (const r of allRepactaciones) {
+      if (r.numero_convenio) {
+        // Extract numeric part from the convenio number
+        const num = parseInt(r.numero_convenio.replace(/\D/g, ''), 10);
+        if (!isNaN(num) && num > maxNumber) {
+          maxNumber = num;
+        }
+      }
+    }
+    
+    numeroConvenio = String(maxNumber + 1);
+  }
 
   const r = await prisma.repactaciones.create({
     data: {
-      cliente_id: BigInt(data.clienteId),
+      cliente_id: cliente.id,
       numero_cliente: cliente.numero_cliente,
-      numero_convenio: data.numeroConvenio || null,
+      numero_convenio: numeroConvenio,
       monto_deuda_inicial: data.montoDeudaInicial,
       total_cuotas: data.totalCuotas,
       monto_cuota_inicial: data.montoCuotaInicial || data.montoDeudaInicial / data.totalCuotas,
       monto_cuota_base: data.montoCuotaBase || data.montoDeudaInicial / data.totalCuotas,
-      fecha_inicio: new Date(data.fechaInicio),
+      fecha_inicio: fechaInicio,
       observaciones: data.observaciones || null,
     },
     include: { cliente: true },
   });
 
   await prisma.log_auditoria.create({
-    data: { accion: 'CREAR_REPACTACION', entidad: 'repactaciones', entidad_id: r.id, usuario_tipo: 'admin', usuario_email: adminEmail, datos_nuevos: { clienteId: data.clienteId, monto: data.montoDeudaInicial, cuotas: data.totalCuotas } },
+    data: { accion: 'CREAR_REPACTACION', entidad: 'repactaciones', entidad_id: r.id, usuario_tipo: 'admin', usuario_email: adminEmail, datos_nuevos: { numeroCliente: data.numeroCliente, monto: data.montoDeudaInicial, cuotas: data.totalCuotas } },
   });
 
   return transformRepactacion(r);
@@ -104,20 +140,55 @@ export async function updateRepactacion(id: bigint, data: any, adminEmail: strin
   const existing = await prisma.repactaciones.findUnique({ where: { id } });
   if (!existing) throw new Error('Repactación no encontrada');
 
+  // Build update data
+  const updateData: any = { fecha_actualizacion: new Date() };
+  
+  if (data.numeroConvenio !== undefined) updateData.numero_convenio = data.numeroConvenio;
+  if (data.observaciones !== undefined) updateData.observaciones = data.observaciones;
+  if (data.estado !== undefined) updateData.estado = data.estado;
+  if (data.fechaTerminoReal !== undefined) updateData.fecha_termino_real = data.fechaTerminoReal ? new Date(data.fechaTerminoReal) : null;
+  if (data.montoDeudaInicial !== undefined) {
+    updateData.monto_deuda_inicial = data.montoDeudaInicial;
+    // Recalculate cuota if monto changes
+    const cuotas = data.totalCuotas ?? existing.total_cuotas;
+    updateData.monto_cuota_inicial = data.montoDeudaInicial / cuotas;
+    updateData.monto_cuota_base = data.montoDeudaInicial / cuotas;
+  }
+  if (data.totalCuotas !== undefined) {
+    updateData.total_cuotas = data.totalCuotas;
+    // Recalculate cuota if cuotas changes
+    const monto = data.montoDeudaInicial ?? Number(existing.monto_deuda_inicial);
+    updateData.monto_cuota_inicial = monto / data.totalCuotas;
+    updateData.monto_cuota_base = monto / data.totalCuotas;
+  }
+  if (data.fechaInicio !== undefined) updateData.fecha_inicio = new Date(data.fechaInicio);
+
   const r = await prisma.repactaciones.update({
     where: { id },
-    data: {
-      ...(data.numeroConvenio !== undefined && { numero_convenio: data.numeroConvenio }),
-      ...(data.observaciones !== undefined && { observaciones: data.observaciones }),
-      ...(data.estado !== undefined && { estado: data.estado }),
-      ...(data.fechaTerminoReal !== undefined && { fecha_termino_real: data.fechaTerminoReal ? new Date(data.fechaTerminoReal) : null }),
-      fecha_actualizacion: new Date(),
-    },
+    data: updateData,
     include: { cliente: true },
   });
 
   await prisma.log_auditoria.create({
-    data: { accion: 'EDITAR_REPACTACION', entidad: 'repactaciones', entidad_id: id, usuario_tipo: 'admin', usuario_email: adminEmail, datos_anteriores: { estado: existing.estado }, datos_nuevos: { estado: r.estado } },
+    data: { 
+      accion: 'EDITAR_REPACTACION', 
+      entidad: 'repactaciones', 
+      entidad_id: id, 
+      usuario_tipo: 'admin', 
+      usuario_email: adminEmail, 
+      datos_anteriores: { 
+        montoDeudaInicial: Number(existing.monto_deuda_inicial),
+        totalCuotas: existing.total_cuotas,
+        estado: existing.estado,
+        observaciones: existing.observaciones
+      }, 
+      datos_nuevos: { 
+        montoDeudaInicial: Number(r.monto_deuda_inicial),
+        totalCuotas: r.total_cuotas,
+        estado: r.estado,
+        observaciones: r.observaciones
+      } 
+    },
   });
 
   return transformRepactacion(r);
@@ -135,6 +206,33 @@ export async function cancelRepactacion(id: bigint, adminEmail: string) {
   });
 
   return { success: true, message: 'Repactación cancelada' };
+}
+
+export async function deleteRepactacion(id: bigint, adminEmail: string) {
+  const existing = await prisma.repactaciones.findUnique({ where: { id } });
+  if (!existing) throw new Error('Repactación no encontrada');
+
+  await prisma.repactaciones.delete({ where: { id } });
+
+  await prisma.log_auditoria.create({
+    data: { 
+      accion: 'ELIMINAR_REPACTACION', 
+      entidad: 'repactaciones', 
+      entidad_id: id, 
+      usuario_tipo: 'admin', 
+      usuario_email: adminEmail, 
+      datos_anteriores: { 
+        numeroConvenio: existing.numero_convenio,
+        clienteId: existing.cliente_id?.toString(),
+        montoDeudaInicial: Number(existing.monto_deuda_inicial),
+        totalCuotas: existing.total_cuotas,
+        estado: existing.estado
+      },
+      datos_nuevos: null
+    },
+  });
+
+  return { success: true, message: 'Repactación eliminada' };
 }
 
 // Solicitudes de repactación (customer requests)

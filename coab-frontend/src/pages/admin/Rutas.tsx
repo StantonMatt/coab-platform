@@ -281,6 +281,13 @@ export default function RutasPage() {
   // Columns use SortableHeader with just column and label - context provides the rest!
   const columns = [
     {
+      key: 'id',
+      header: <SortableHeader column="id" label="ID" />,
+      render: (ruta: Ruta) => (
+        <span className="text-slate-600 font-mono text-sm">{ruta.id}</span>
+      ),
+    },
+    {
       key: 'nombre',
       header: <SortableHeader column="nombre" label="Nombre" />,
       render: (ruta: Ruta) => (

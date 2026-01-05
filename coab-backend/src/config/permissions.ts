@@ -46,7 +46,8 @@ export type PermissionEntity =
   | 'descuentos'
   | 'tarifas'
   | 'rutas'
-  | 'cortes_servicio';
+  | 'cortes_servicio'
+  | 'boletas';
 
 /**
  * Permission matrix - defines which roles can perform which actions on each entity
@@ -132,6 +133,13 @@ export const PERMISSIONS: Record<PermissionEntity, Partial<Record<PermissionActi
     create: ALL_ROLES,              // billing_clerk can initiate cortes
     edit: SUPERVISOR_UP,
     authorize_reposicion: SUPERVISOR_UP,
+    delete: ADMIN_ONLY,
+  },
+  
+  boletas: {
+    view: ALL_ROLES,
+    create: SUPERVISOR_UP,          // Generate and import boletas
+    edit: ADMIN_ONLY,
     delete: ADMIN_ONLY,
   },
 };

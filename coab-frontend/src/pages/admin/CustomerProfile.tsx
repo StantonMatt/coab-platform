@@ -91,13 +91,18 @@ interface Medidor {
 }
 
 interface Lectura {
-  id: number;
-  medidor_id: number;
-  lectura_anterior: number;
-  lectura_actual: number;
-  consumo_m3: number;
-  fecha_lectura: string;
+  id: string;
+  medidorId: string;
+  valorLectura: number;
+  valorCorregido: number | null;
+  fechaLectura: string;
+  periodoAno: number;
+  periodoMes: number;
+  tipoLectura: string | null;
+  confirmada: boolean;
   observaciones: string | null;
+  advertencia: boolean;
+  tieneCorreccion: boolean;
 }
 
 interface Multa {
@@ -716,14 +721,14 @@ export default function CustomerProfilePage() {
                               className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
                                 boleta.parcialmentePagada
                                   ? 'bg-amber-100 text-amber-700'
-                                  : boleta.estado === 'pendiente'
+                                  : boleta.montoAdeudado && boleta.montoAdeudado > 0
                                   ? 'bg-orange-100 text-orange-700'
                                   : 'bg-emerald-100 text-emerald-700'
                               }`}
                             >
                               {boleta.parcialmentePagada
                                 ? 'Parcial'
-                                : boleta.estado === 'pendiente'
+                                : boleta.montoAdeudado && boleta.montoAdeudado > 0
                                 ? 'Pendiente'
                                 : 'Pagada'}
                             </span>
@@ -896,16 +901,16 @@ export default function CustomerProfilePage() {
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
                         <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
+                          Período
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
                           Fecha
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
-                          Anterior
+                          Lectura
                         </th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
-                          Actual
-                        </th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase">
-                          Consumo
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600 uppercase">
+                          Estado
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">
                           Observaciones
@@ -915,17 +920,36 @@ export default function CustomerProfilePage() {
                     <tbody className="divide-y divide-slate-100">
                       {lecturasData.lecturas.map((lectura: Lectura) => (
                         <tr key={lectura.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-3 text-slate-900">
-                            {formatearFechaSinHora(lectura.fecha_lectura, FORMATOS_FECHA.CORTO)}
+                          <td className="px-4 py-3 text-slate-900 font-medium">
+                            {lectura.periodoMes}/{lectura.periodoAno}
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-600">
-                            {lectura.lectura_anterior}
+                          <td className="px-4 py-3 text-slate-600">
+                            {formatearFechaSinHora(lectura.fechaLectura, FORMATOS_FECHA.CORTO)}
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-600">
-                            {lectura.lectura_actual}
+                          <td className="px-4 py-3 text-right font-mono">
+                            {lectura.tieneCorreccion ? (
+                              <div className="flex flex-col items-end">
+                                <span className="text-slate-900 font-medium">{lectura.valorCorregido}</span>
+                                <span className="text-xs text-slate-400 line-through">{lectura.valorLectura}</span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-900">{lectura.valorLectura}</span>
+                            )}
                           </td>
-                          <td className="px-4 py-3 text-right font-medium text-slate-900">
-                            {lectura.consumo_m3} m³
+                          <td className="px-4 py-3 text-center">
+                            {lectura.confirmada ? (
+                              <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                                Confirmada
+                              </span>
+                            ) : lectura.advertencia ? (
+                              <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                                Advertencia
+                              </span>
+                            ) : (
+                              <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+                                Pendiente
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-slate-500 text-sm">
                             {lectura.observaciones || '-'}
