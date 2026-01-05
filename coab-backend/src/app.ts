@@ -5,7 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import { env } from './config/env.js';
 import authRoutes from './routes/auth.routes.js';
 import customerRoutes from './routes/customer.routes.js';
-import adminRoutes from './routes/admin.routes.js';
+import adminRoutes from './routes/admin/index.js';
 import paymentRoutes, { webhookRoutes } from './routes/payment.routes.js';
 
 // Fix BigInt JSON serialization globally
