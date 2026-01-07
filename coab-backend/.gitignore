@@ -33,6 +33,13 @@ coverage/
 # Imported files (local data, not version controlled)
 imported_files/
 
+# But DO track the boleta scripts (not data)
+!imported_files/boletas/scripts/
+!imported_files/boletas/scripts/*.ts
+
+# Ignore script outputs (generated CSV files)
+scripts/one-off/output/
+
 
 
 

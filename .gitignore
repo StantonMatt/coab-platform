@@ -146,3 +146,8 @@ $RECYCLE.BIN/
 # ============================================
 worktrees/
 *.worktree
+
+# ============================================
+# Script Outputs (generated files)
+# ============================================
+scripts/one-off/output/

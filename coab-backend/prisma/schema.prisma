@@ -31,8 +31,10 @@ model clientes {
   ultimo_inicio_sesion       DateTime?                  @db.Timestamptz(6)
   pago_automatico_activo     Boolean                    @default(false)
   tarjeta_pago_automatico_id BigInt?
+  medidor_id                 BigInt?                    /// Direct link to meter for historical boleta generation
   boletas                    boletas[]
   tarjeta_pago_automatico    tarjetas_guardadas?        @relation("tarjeta_autopago", fields: [tarjeta_pago_automatico_id], references: [id])
+  medidor                    medidores?                 @relation(fields: [medidor_id], references: [id])
   cortes_servicio            cortes_servicio[]
   descuentos_aplicados       descuentos_aplicados[]
   direcciones                direcciones[]
@@ -42,17 +44,18 @@ model clientes {
   pagos                      pagos[]
   repactaciones              repactaciones[]
   saldos_iniciales           saldos_iniciales?
+  solicitudes_repactacion    solicitudes_repactacion[]
   subsidio_historial         subsidio_historial[]
   tarjetas_guardadas         tarjetas_guardadas[]
   tokens_configuracion       token_configuracion[]
   transacciones_online       transacciones_online[]
   verificaciones_contacto    verificacion_contacto[]
-  solicitudes_repactacion    solicitudes_repactacion[]
 
   @@index([primer_apellido, segundo_apellido], map: "idx_clientes_apellidos")
   @@index([numero_cliente, es_cliente_actual], map: "idx_clientes_numero_actual")
   @@index([rut], map: "idx_clientes_rut")
   @@index([pago_automatico_activo], map: "idx_clientes_autopago")
+  @@index([medidor_id], map: "idx_clientes_medidor")
 }
 
 model perfiles {
@@ -106,8 +109,8 @@ model boletas {
   costo_tratamiento                Decimal?                   @db.Decimal(10, 2)
   costo_alcantarillado_tratamiento Decimal?                   @db.Decimal(10, 2)
   costo_cargo_fijo                 Decimal?                   @db.Decimal(10, 2)
-  pdf_path                         String?                    // Supabase storage path
   pdf_generado_en                  DateTime?                  @db.Timestamptz(6)
+  pdf_path                         String?
   cliente                          clientes?                  @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   repactacion                      repactaciones?             @relation(fields: [repactacion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   cortes_servicio                  cortes_servicio[]
@@ -229,6 +232,7 @@ model medidores {
   lectura_inicial   Int         @default(0)
   lecturas          lecturas[]
   direccion         direcciones @relation(fields: [direccion_id], references: [id], onUpdate: NoAction)
+  clientes          clientes[]  /// Clients linked to this meter (current and historical)
 
   @@index([direccion_id], map: "idx_medidores_direccion_id")
   @@index([estado], map: "idx_medidores_estado")
@@ -289,20 +293,20 @@ model lectura_correcciones {
 }
 
 model repactaciones {
-  id                  BigInt    @id @default(autoincrement())
-  numero_convenio     String?
-  numero_cliente      String
-  cliente_id          BigInt?
-  monto_deuda_inicial Decimal   @db.Decimal
-  total_cuotas        Int
-  monto_cuota_inicial Decimal   @db.Decimal
-  monto_cuota_base    Decimal   @db.Decimal
-  fecha_inicio        DateTime  @db.Date
-  fecha_termino_real  DateTime? @db.Date
-  estado              String    @default("activo")
-  observaciones       String?
-  fecha_creacion      DateTime  @default(now()) @db.Timestamptz(6)
-  fecha_actualizacion DateTime  @default(now()) @db.Timestamptz(6)
+  id                      BigInt                    @id @default(autoincrement())
+  numero_convenio         String?
+  numero_cliente          String
+  cliente_id              BigInt?
+  monto_deuda_inicial     Decimal                   @db.Decimal
+  total_cuotas            Int
+  monto_cuota_inicial     Decimal                   @db.Decimal
+  monto_cuota_base        Decimal                   @db.Decimal
+  fecha_inicio            DateTime                  @db.Date
+  fecha_termino_real      DateTime?                 @db.Date
+  estado                  String                    @default("activo")
+  observaciones           String?
+  fecha_creacion          DateTime                  @default(now()) @db.Timestamptz(6)
+  fecha_actualizacion     DateTime                  @default(now()) @db.Timestamptz(6)
   boletas                 boletas[]
   cliente                 clientes?                 @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   solicitudes_repactacion solicitudes_repactacion[]
@@ -635,9 +639,9 @@ model intentos_pago_automatico {
 model verificacion_contacto {
   id          BigInt   @id @default(autoincrement())
   cliente_id  BigInt
-  tipo        String   @db.VarChar(20) // 'email' or 'telefono'
-  nuevo_valor String   // the new email or phone number
-  codigo_hash String   // 6-digit code (SHA-256 hashed)
+  tipo        String   @db.VarChar(20)
+  nuevo_valor String
+  codigo_hash String
   intentos    Int      @default(0)
   expira_en   DateTime @db.Timestamptz(6)
   creado_en   DateTime @default(now()) @db.Timestamptz(6)
@@ -650,15 +654,15 @@ model verificacion_contacto {
 /// Batch PDF generation jobs for progress tracking
 model trabajos_pdf {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  periodo       String    @db.VarChar(7) // "2025-11"
-  estado        String    @default("pendiente") @db.VarChar(20) // pendiente, procesando, completado, error, cancelado
+  periodo       String    @db.VarChar(7)
+  estado        String    @default("pendiente") @db.VarChar(20)
   total         Int       @default(0)
   procesados    Int       @default(0)
   exitosos      Int       @default(0)
   fallidos      Int       @default(0)
   omitidos      Int       @default(0)
   regenerar     Boolean   @default(false)
-  zip_path      String?   @db.VarChar(255) // Path in Supabase Storage
+  zip_path      String?   @db.VarChar(255)
   errores       Json      @default("[]")
   iniciado_en   DateTime  @default(now()) @db.Timestamptz(6)
   completado_en DateTime? @db.Timestamptz(6)
@@ -677,11 +681,11 @@ model solicitudes_repactacion {
   monto_deuda_estimado Decimal        @db.Decimal(12, 2)
   cuotas_solicitadas   Int
   motivo               String?
-  estado               String         @default("pendiente") @db.VarChar(30) // pendiente, aprobada, rechazada, cancelada
+  estado               String         @default("pendiente") @db.VarChar(30)
   revisado_por         String?        @db.VarChar(100)
   fecha_revision       DateTime?      @db.Timestamptz(6)
   motivo_rechazo       String?
-  repactacion_id       BigInt?        // Link to created repactacion when approved
+  repactacion_id       BigInt?
   creado_en            DateTime       @default(now()) @db.Timestamptz(6)
   actualizado_en       DateTime       @default(now()) @db.Timestamptz(6)
   cliente              clientes       @relation(fields: [cliente_id], references: [id], onDelete: Cascade)

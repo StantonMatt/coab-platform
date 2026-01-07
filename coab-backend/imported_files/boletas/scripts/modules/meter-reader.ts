@@ -9,59 +9,66 @@ export async function getMeterAndReadings(
   periodoFin: Date,
   debugLog?: string[] | null
 ): Promise<MeterReadingInfo | null> {
-  let medidor = null;
-  
-  // 1. First try direct medidor_id link (works for both current and ANTERIOR clients)
-  if (cliente.medidor_id) {
-    medidor = await prisma.medidores.findFirst({
-      where: {
-        id: cliente.medidor_id,
-        lecturas: {
-          some: {
-            fecha_lectura: {
-              gte: periodoInicio,
-              lte: periodoFin
-            }
+  // 1. Get meter - handle client transitions where old clients share meters with new ones
+  let medidor = await prisma.medidores.findFirst({
+    where: {
+      direcciones: {
+        cliente_id: cliente.id
+      },
+      lecturas: {
+        some: {
+          fecha_lectura: {
+            gte: periodoInicio,
+            lte: periodoFin
           }
         }
-      },
-      orderBy: [
-        { estado: 'asc' }
-      ]
-    });
-    
-    if (debugLog) {
-      debugLog.push(`Direct medidor_id lookup for cliente ${cliente.id}: ${medidor ? `Found (ID: ${medidor.id})` : 'Not found with readings'}`);
-    }
-    
-    if (medidor) {
-      console.log(`  ✅ Usando medidor ${medidor.id} vía enlace directo medidor_id`);
-    }
+      }
+    },
+    orderBy: [
+      { estado: 'asc' } // Prefer 'activo' over 'averiado' if both have readings
+    ]
+  });
+  
+  if (debugLog) {
+    debugLog.push(`Medidor search for cliente ID ${cliente.id}: ${medidor ? `Found (ID: ${medidor.id})` : 'Not found with readings'}`);
   }
   
-  // 2. Fallback: Try address chain if no direct link or no readings found
-  if (!medidor) {
-    medidor = await prisma.medidores.findFirst({
+  // If no meter found and this is an old client, look for meter of new client with same numero_cliente
+  if (!medidor && !cliente.es_cliente_actual) {
+    console.log(`  🔍 Cliente antiguo sin medidor, buscando medidor del nuevo cliente...`);
+    
+    // Find the current client with the same numero_cliente
+    const currentClient = await prisma.clientes.findFirst({
       where: {
-        direccion: {
-          cliente_id: cliente.id
-        },
-        lecturas: {
-          some: {
-            fecha_lectura: {
-              gte: periodoInicio,
-              lte: periodoFin
-            }
-          }
-        }
-      },
-      orderBy: [
-        { estado: 'asc' } // Prefer 'activo' over 'averiado' if both have readings
-      ]
+        numero_cliente: cliente.numero_cliente,
+        es_cliente_actual: true
+      }
     });
     
-    if (debugLog) {
-      debugLog.push(`Address chain lookup for cliente ${cliente.id}: ${medidor ? `Found (ID: ${medidor.id})` : 'Not found with readings'}`);
+    if (currentClient) {
+      // Get the meter from the current client that has readings for this period
+      medidor = await prisma.medidores.findFirst({
+        where: {
+          direcciones: {
+            cliente_id: currentClient.id
+          },
+          lecturas: {
+            some: {
+              fecha_lectura: {
+                gte: periodoInicio,
+                lte: periodoFin
+              }
+            }
+          }
+        },
+        orderBy: [
+          { estado: 'asc' }
+        ]
+      });
+      
+      if (medidor) {
+        console.log(`  ✅ Usando medidor ${medidor.id} del cliente actual (ID: ${currentClient.id})`);
+      }
     }
   }
   

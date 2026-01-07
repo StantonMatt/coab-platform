@@ -5,8 +5,6 @@ import { calculateSubsidy } from './subsidy-calculator';
 
 /**
  * Processes meter readings using pre-fetched data for performance optimization
- * 
- * Uses direct medidor_id link when available (works for ANTERIOR clients)
  */
 export async function processMeterReadingsFromCache(
   prisma: PrismaClient,
@@ -23,15 +21,39 @@ export async function processMeterReadingsFromCache(
   const meters = preFetchedData.meters.get(clientIdStr) || [];
   
   // Find meter with readings for this period
-  // The batch processor already handles both direct medidor_id and address chain lookups
   let medidor = meters.find(m => 
     m.lecturas?.some((l: any) => 
       l.fecha_lectura >= periodoInicio && l.fecha_lectura <= periodoFin
     )
   );
   
-  if (medidor && verboseLogging) {
-    console.log(`  ✅ Usando medidor ${medidor.id} (${cliente.medidor_id ? 'enlace directo' : 'cadena dirección'})`);
+  // If no meter and this is an old client, look for new client's meter
+  if (!medidor && !cliente.es_cliente_actual) {
+    if (verboseLogging) {
+      console.log(`  🔍 Cliente antiguo sin medidor, buscando medidor del nuevo cliente...`);
+    }
+    
+    const currentClient = await prisma.clientes.findFirst({
+      where: {
+        numero_cliente: cliente.numero_cliente,
+        es_cliente_actual: true
+      }
+    });
+    
+    if (currentClient) {
+      const currentClientMeters = preFetchedData.meters.get(currentClient.id.toString()) || [];
+      medidor = currentClientMeters.find(m => 
+        m.lecturas?.some((l: any) => 
+          l.fecha_lectura >= periodoInicio && l.fecha_lectura <= periodoFin
+        )
+      );
+      
+      if (medidor) {
+        if (verboseLogging) {
+          console.log(`  ✅ Usando medidor ${medidor.id} del cliente actual (ID: ${currentClient.id})`);
+        }
+      }
+    }
   }
   
   if (!medidor) {
@@ -105,14 +127,14 @@ export function processDiscountsFromCache(
   let descuentoAplicado = null;
   const descuentoIds: number[] = [];
   
-  for (const descuentoApp of clientDiscounts) {
-    if (descuentoApp.descuento) {
-      const monto = new Decimal(descuentoApp.monto_aplicado);
+  for (const descuento of clientDiscounts) {
+    if (descuento.descuentos) {
+      const monto = new Decimal(descuento.monto_aplicado);
       montoDescuento = montoDescuento.plus(monto);
-      descuentoAplicado = descuentoApp;
-      descuentoIds.push(Number(descuentoApp.id));
+      descuentoAplicado = descuento;
+      descuentoIds.push(descuento.id);
       if (verboseLogging) {
-        console.log(`  🎁 ${descuentoApp.descuento.nombre}: $${monto.toFixed(0)}`);
+        console.log(`  🎁 ${descuento.descuentos.nombre}: $${monto.toFixed(0)}`);
       }
     }
   }

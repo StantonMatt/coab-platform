@@ -8,12 +8,6 @@ export interface BatchResult<T> {
 
 /**
  * Fetches all meter readings for a batch of clients in a single query
- * 
- * Uses two strategies:
- * 1. Address chain (direccion -> cliente) - primary approach for current clients
- * 2. Direct medidor_id link - for ANTERIOR clients who don't have addresses anymore
- * 
- * This ensures both current clients and ANTERIOR clients get their meters found.
  */
 export async function batchFetchMeterReadings(
   prisma: PrismaClient,
@@ -26,92 +20,49 @@ export async function batchFetchMeterReadings(
   prevMonth.setUTCMonth(prevMonth.getUTCMonth() - 1);
   const prevMonthStart = new Date(Date.UTC(prevMonth.getUTCFullYear(), prevMonth.getUTCMonth(), 1));
   
-  // Strategy 1: Fetch meters via address chain (works for clients with addresses)
-  const addressChainMeters = await prisma.medidores.findMany({
+  // Fetch all meters and readings for all clients in batch
+  const metersWithReadings = await prisma.medidores.findMany({
     where: {
-      direccion: {
+      direcciones: {
         cliente_id: { in: clientIds }
       }
     },
     include: {
-      direccion: true,
+      direcciones: true,
       lecturas: {
         where: {
           OR: [
-            { fecha_lectura: { gte: periodoInicio, lte: periodoFin } },
-            { fecha_lectura: { gte: prevMonthStart, lt: periodoInicio } }
+            // Current period readings
+            {
+              fecha_lectura: {
+                gte: periodoInicio,
+                lte: periodoFin
+              }
+            },
+            // Previous period readings
+            {
+              fecha_lectura: {
+                gte: prevMonthStart,
+                lt: periodoInicio
+              }
+            }
           ]
         },
         orderBy: { fecha_lectura: 'desc' }
       }
     },
-    orderBy: { estado: 'asc' }
+    orderBy: { estado: 'asc' } // Prefer 'activo' over 'averiado'
   });
   
-  // Organize by client ID from address chain
+  // Organize by client ID
   const metersByClient = new Map<string, any[]>();
-  
-  for (const meter of addressChainMeters) {
-    const clientId = meter.direccion?.cliente_id?.toString();
+  for (const meter of metersWithReadings) {
+    const clientId = meter.direcciones?.cliente_id?.toString();
     if (clientId) {
       if (!metersByClient.has(clientId)) {
         metersByClient.set(clientId, []);
       }
       metersByClient.get(clientId)!.push(meter);
-    }
-  }
-  
-  // Strategy 2: For clients without meters via address chain, try direct medidor_id
-  // This handles ANTERIOR clients whose addresses were transferred to new clients
-  const clientsWithoutMeters = clientIds.filter(id => !metersByClient.has(id.toString()));
-  
-  if (clientsWithoutMeters.length > 0) {
-    // Get medidor_id for clients without meters
-    const clientsWithMedidorId = await prisma.clientes.findMany({
-      where: { 
-        id: { in: clientsWithoutMeters },
-        medidor_id: { not: null }
-      },
-      select: { id: true, medidor_id: true }
-    });
-    
-    if (clientsWithMedidorId.length > 0) {
-      const meterIds = clientsWithMedidorId.map(c => c.medidor_id!);
-      
-      // Build a map of meterId -> clientId for these ANTERIOR clients
-      const meterToClient = new Map<string, string>();
-      for (const c of clientsWithMedidorId) {
-        meterToClient.set(c.medidor_id!.toString(), c.id.toString());
-      }
-      
-      // Fetch these meters directly
-      const directMeters = await prisma.medidores.findMany({
-        where: { id: { in: meterIds } },
-        include: {
-          direccion: true,
-          lecturas: {
-            where: {
-              OR: [
-                { fecha_lectura: { gte: periodoInicio, lte: periodoFin } },
-                { fecha_lectura: { gte: prevMonthStart, lt: periodoInicio } }
-              ]
-            },
-            orderBy: { fecha_lectura: 'desc' }
-          }
-        },
-        orderBy: { estado: 'asc' }
-      });
-      
-      // Add these meters to the map using the ANTERIOR client's ID
-      for (const meter of directMeters) {
-        const clientId = meterToClient.get(meter.id.toString());
-        if (clientId) {
-          if (!metersByClient.has(clientId)) {
-            metersByClient.set(clientId, []);
-          }
-          metersByClient.get(clientId)!.push(meter);
-        }
-      }
     }
   }
   
@@ -198,7 +149,7 @@ export async function batchFetchDiscounts(
   const descuentosAplicados = await prisma.descuentos_aplicados.findMany({
     where: {
       cliente_id: { in: clientIds },
-      descuento: {
+      descuentos: {
         fecha_inicio: { lte: periodoFin },
         OR: [
           { fecha_fin: null },
@@ -208,7 +159,7 @@ export async function batchFetchDiscounts(
       }
     },
     include: {
-      descuento: true
+      descuentos: true
     }
   });
   
